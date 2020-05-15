@@ -47,6 +47,10 @@ if not os.path.exists(args.dir_out):
 n_obs_list = util.arrange_full(args.n_obs_min, args.n_obs_max, args.n_obs_step)
 dim_in_list = util.arrange_full(args.dim_in_min, args.dim_in_max, args.dim_in_step)
 
+print('running experiments for the following setups')
+print('number of observations: ', n_obs_list)
+print('number of input dimensions: ', dim_in_list)
+
 ## allocate space for results: obs x dim_in x rep x input
 res_shape = (len(n_obs_list), len(dim_in_list), args.n_rep, np.max(dim_in_list))
 res = {
