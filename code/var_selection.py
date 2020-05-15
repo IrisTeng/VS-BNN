@@ -10,6 +10,7 @@ import exp.models as models
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset_name', type=str, default='rbf')
 parser.add_argument('--dir_out', type=str, default='output/')
+parser.add_argument('--subtract_covariates', action='store_true', help='use Y - beta*X as outcome')
 
 parser.add_argument('--n_obs_min', type=int, default=10)
 parser.add_argument('--n_obs_max', type=int, default=100)
@@ -64,6 +65,15 @@ for i, n_obs in enumerate(n_obs_list):
             seed += 1
 
             Z, X, Y, sig2 = util.load_data(args.dataset_name, n_obs=n_obs, dim_in=dim_in, seed=seed)
+
+            if sig2 is None:
+                sig2 = np.var(Y) # initial guess for sig2, could be improved?
+
+            if args.subtract_covariates:
+                if X is None:
+                    print('error: no covariates to subtract')
+                else:
+                    Y = util.resid_linear_model(X,Y)
 
             if args.model=='GP':
                 m = models.GPyVarImportance(Z, Y, sig2=sig2, \

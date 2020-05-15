@@ -81,7 +81,7 @@ def bkmr_toy(n_obs, dim_in, sig2=.5):
     
     return Z, Y.reshape(-1,1), sig2
 
-def workshop_data(n_obs_samp=None, dim_in_samp=None, dir_in='../../data/workshop', seed=0):
+def workshop_data(n_obs_samp=None, dim_in_samp=None, dir_in='../data/workshop', seed=0):
     '''
     randomly samples observations and mixture components. 
     by default uses all observations and mixture components.
@@ -245,4 +245,13 @@ def plot_results_dist(data, dim_in, n_obs_list, data_true=None, fig=None, ax=Non
 def arrange_full(start, stop, step): 
     # so, e.g., np.arrange(1,10,1) returns [1,2,...,10] instead of [1,2,...,9]
     return np.arange(start, stop+((stop-start)%step==0), step) 
+
+def resid_linear_model(X, Y):
+    '''
+    Regress X on Y and return residual
+    '''
+    beta_hat = np.linalg.pinv(X.T @ X) @ X.T @ Y
+    return Y - X @ beta_hat
+
+
 
