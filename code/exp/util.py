@@ -86,6 +86,8 @@ def workshop_data(n_obs_samp=None, dim_in_samp=None, dir_in='../data/workshop', 
     randomly samples observations and mixture components. 
     by default uses all observations and mixture components.
 
+    raw data has 1003 observations and 18 features for X and Z
+
     used in bkmr as:
     kmbayes(y=lnLTL_z, Z=lnmixture_z, X=covariates)
     ''' 
