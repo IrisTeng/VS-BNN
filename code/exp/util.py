@@ -195,6 +195,7 @@ def split_into_batches(X, batch_size):
 
 ## plotting
 
+'''
 def plot_results_grid(data, dim_in_list, n_obs_list, fig=None, ax=None):
     if fig is None and ax is None:
         fig, ax = plt.subplots(1,data.shape[2], figsize=(16,4), sharex=True, sharey=True)
@@ -209,6 +210,26 @@ def plot_results_grid(data, dim_in_list, n_obs_list, fig=None, ax=None):
     plt.xticks(np.arange(len(dim_in_list)), labels=dim_in_list)
 
     plt.yticks(np.arange(len(n_obs_list)), labels=n_obs_list)
+
+    fig.colorbar(pcm, ax=ax[:], shrink=0.6)
+
+    return fig, ax 
+'''
+
+def plot_results_grid(data, x_vals, y_vals, x_lab, y_lab, fig=None, ax=None):
+    if fig is None and ax is None:
+        fig, ax = plt.subplots(1,data.shape[2], figsize=(16,4), sharex=True, sharey=True)
+    
+    vmax = np.nanmax(data)
+    ax[0].set_ylabel(y_lab)
+    for i in range(data.shape[2]):
+        pcm=ax[i].imshow(data[:,:,i],vmin=0, vmax=vmax)
+        ax[i].set_title('X_%d'%i)
+        ax[i].set_xlabel(x_lab)
+
+    plt.xticks(np.arange(len(x_vals)), labels=x_vals)
+
+    plt.yticks(np.arange(len(y_vals)), labels=y_vals)
 
     fig.colorbar(pcm, ax=ax[:], shrink=0.6)
 

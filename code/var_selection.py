@@ -107,6 +107,7 @@ np.save(os.path.join(args.dir_out, 'results.npy'), res)
 
 
 # visualization
+# res has dimensions: obs x dim_in x rff_dim x rep x input
 res = np.load(os.path.join(args.dir_out, 'results.npy'), allow_pickle=True).item()
 
 # average over reps
@@ -116,10 +117,18 @@ psi_mean_med = np.median(res['psi_mean'], 3) # mean over psi samples, median ove
 psi_var_mean = np.mean(res['psi_var'], 3) # variance over psi samples, mean over reps
 psi_var_med = np.median(res['psi_var'], 3) # variance over psi samples, median over reps
 
-
 ## grid plots
-fig, ax = util.plot_results_grid(psi_mean_mean, res['dim_in_list'], res['n_obs_list'])
-fig.savefig(os.path.join(args.dir_out, 'estimated_psi.png'))
+idx_rff_dim = 0 # slice of rff_dim to plot
+fig, ax = util.plot_results_grid(psi_mean_mean[:,:,idx_rff_dim,:], res['dim_in_list'], res['n_obs_list'], 'num. inputs', 'num. inputs')
+fig.savefig(os.path.join(args.dir_out, 'estimated_psi_fixed_rff_dim.png'))
+
+idx_dim_in = -1 # slice of dim_in to plot
+fig, ax = util.plot_results_grid(psi_mean_mean[:,idx_dim_in,:,:], res['rff_dim_list'], res['n_obs_list'], 'num. rff', 'num. inputs')
+fig.savefig(os.path.join(args.dir_out, 'estimated_psi_fixed_dim_in.png'))
+
+idx_n_obs = 0 # slice of n_obs to plot
+fig, ax = util.plot_results_grid(psi_mean_mean[idx_n_obs,:,:,:], res['n_obs_list'], res['rff_dim_list'], 'num. rff', 'num. inputs')
+fig.savefig(os.path.join(args.dir_out, 'estimated_psi_fixed_n_obs.png'))
 
 
 ## violin plots
