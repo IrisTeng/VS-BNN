@@ -33,7 +33,9 @@ parser.add_argument('--kernel_lengthscale', type=float, default=1.0)
 parser.add_argument('--kernel_variance', type=float, default=1.0)
 
 # RFF options
-parser.add_argument('--rff_dim', type=int, default=1200)
+parser.add_argument('--rff_dim_min', type=int, default=808)
+parser.add_argument('--rff_dim_max', type=int, default=1200)
+parser.add_argument('--rff_dim_step', type=int, default=100)
 parser.add_argument('--batch_size', type=int, default=16)
 parser.add_argument('--epochs', type=int, default=16)
 
@@ -46,54 +48,58 @@ if not os.path.exists(args.dir_out):
 # allocate space
 n_obs_list = util.arrange_full(args.n_obs_min, args.n_obs_max, args.n_obs_step)
 dim_in_list = util.arrange_full(args.dim_in_min, args.dim_in_max, args.dim_in_step)
+rff_dim_list = util.arrange_full(args.rff_dim_min, args.rff_dim_max, args.rff_dim_step)
 
 print('running experiments for the following setups')
 print('number of observations: ', n_obs_list)
 print('number of input dimensions: ', dim_in_list)
 
-## allocate space for results: obs x dim_in x rep x input
-res_shape = (len(n_obs_list), len(dim_in_list), args.n_rep, np.max(dim_in_list))
+## allocate space for results: obs x dim_in x rff_dim x rep x input
+res_shape = (len(n_obs_list), len(dim_in_list), len(rff_dim_list), args.n_rep, np.max(dim_in_list))
 res = {
     'psi_mean': np.full(res_shape, np.nan),
     'psi_var': np.full(res_shape, np.nan),
     'n_obs_list': n_obs_list,
-    'dim_in_list': dim_in_list
+    'dim_in_list': dim_in_list,
+    'rff_dim_list': dim_in_list
     }
 
 seed = 0
 for i, n_obs in enumerate(n_obs_list):
     for j, dim_in in enumerate(dim_in_list):
-        print('n_obs [%d/%d], dim_in [%d/%d]' % (i,len(n_obs_list),j,len(dim_in_list)))
+        for l, rff_dim in enumerate(rff_dim_list):
+
+            print('n_obs [%d/%d], dim_in [%d/%d], rff_dim [%d/%d]' % (i,len(n_obs_list),j,len(dim_in_list),l,len(rff_dim_list)))
         
-        for k in range(args.n_rep):
-            seed += 1
+            for k in range(args.n_rep):
+                seed += 1
 
-            Z, X, Y, sig2 = util.load_data(args.dataset_name, n_obs=n_obs, dim_in=dim_in, seed=seed)
+                Z, X, Y, sig2 = util.load_data(args.dataset_name, n_obs=n_obs, dim_in=dim_in, seed=seed)
 
-            if sig2 is None:
-                sig2 = np.var(Y) # initial guess for sig2, could be improved?
+                if sig2 is None:
+                    sig2 = np.var(Y) # initial guess for sig2, could be improved?
 
-            if args.subtract_covariates:
-                if X is None:
-                    print('error: no covariates to subtract')
-                else:
-                    Y = util.resid_linear_model(X,Y)
+                if args.subtract_covariates:
+                    if X is None:
+                        print('error: no covariates to subtract')
+                    else:
+                        Y = util.resid_linear_model(X,Y)
 
-            if args.model=='GP':
-                m = models.GPyVarImportance(Z, Y, sig2=sig2, \
-                    opt_kernel_hyperparam=args.opt_kernel_hyperparam, \
-                    opt_sig2=args.opt_likelihood_variance,\
-                    lengthscale=args.kernel_lengthscale, variance=args.kernel_variance)
+                if args.model=='GP':
+                    m = models.GPyVarImportance(Z, Y, sig2=sig2, \
+                        opt_kernel_hyperparam=args.opt_kernel_hyperparam, \
+                        opt_sig2=args.opt_likelihood_variance,\
+                        lengthscale=args.kernel_lengthscale, variance=args.kernel_variance)
 
-                m.train()
-            
-            elif args.model=='RFF':
-                m = models.RffVarImportance(Z)
-                m.train(Z, Y, sig2, rff_dim=args.rff_dim, batch_size=args.batch_size, epochs=args.epochs)
+                    m.train()
+                
+                elif args.model=='RFF':
+                    m = models.RffVarImportance(Z)
+                    m.train(Z, Y, sig2, rff_dim=rff_dim, batch_size=args.batch_size, epochs=args.epochs)
 
-            psi_est = m.estimate_psi(Z)
-            res['psi_mean'][i,j,k,:dim_in] = psi_est[0]
-            res['psi_var'][i,j,k,:dim_in] = psi_est[1]
+                psi_est = m.estimate_psi(Z)
+                res['psi_mean'][i,j,l,k,:dim_in] = psi_est[0]
+                res['psi_var'][i,j,l,k,:dim_in] = psi_est[1]
 
 
 np.save(os.path.join(args.dir_out, 'results.npy'), res)
@@ -104,11 +110,11 @@ np.save(os.path.join(args.dir_out, 'results.npy'), res)
 res = np.load(os.path.join(args.dir_out, 'results.npy'), allow_pickle=True).item()
 
 # average over reps
-psi_mean_mean = np.mean(res['psi_mean'], 2) # mean over psi samples, mean over reps
-psi_mean_med = np.median(res['psi_mean'], 2) # mean over psi samples, median over reps
+psi_mean_mean = np.mean(res['psi_mean'], 3) # mean over psi samples, mean over reps
+psi_mean_med = np.median(res['psi_mean'], 3) # mean over psi samples, median over reps
 
-psi_var_mean = np.mean(res['psi_var'], 2) # variance over psi samples, mean over reps
-psi_var_med = np.median(res['psi_var'], 2) # variance over psi samples, median over reps
+psi_var_mean = np.mean(res['psi_var'], 3) # variance over psi samples, mean over reps
+psi_var_med = np.median(res['psi_var'], 3) # variance over psi samples, median over reps
 
 
 ## grid plots
