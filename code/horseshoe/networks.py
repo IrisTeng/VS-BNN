@@ -265,11 +265,11 @@ class RffHs(nn.Module):
         self.layer_in = layers.RffHsLayer(self.dim_in, self.dim_hidden)
         self.layer_out = layers.LinearLayer(self.dim_hidden, sig2_y=1/sig2_inv)
 
-    def forward(self, x, x_linear=None, sample=True):
+    def forward(self, x, x_linear=None, sample_input_layer=True, weights_type='sample'):
 
         # network
-        h = self.layer_in(x, sample=sample)
-        y = self.layer_out(h, sample=sample) # sample?
+        h = self.layer_in(x, sample=sample_input_layer)
+        y = self.layer_out(h, weights_type=weights_type)
 
         # add linear term if specified
         if self.linear_term and x_linear is not None:
@@ -291,10 +291,13 @@ class RffHs(nn.Module):
 
     def loss(self, x, y, x_linear=None, temperature=1):
         '''negative elbo'''
-        y_pred = self.forward(x, x_linear, sample=True)
+        y_pred = self.forward(x, x_linear, sample_input_layer=True, weights_type='stored')
 
         kl_divergence = self.kl_divergence()
+        #kl_divergence = 0
+
         neg_log_prob = self.neg_log_prob(y, y_pred)
+        #neg_log_prob = 0
 
         return neg_log_prob + temperature*kl_divergence
 
@@ -303,6 +306,8 @@ class RffHs(nn.Module):
 
         h = self.layer_in(x, sample=True) # hidden units based on sample from variational dist
         self.layer_out.fixed_point_updates(h, y) # conjugate update of output weights 
+
+        self.layer_out.sample_weights(store=True) # sample output weights from full conditional
 
         if self.linear_term:
             if self.infer_noise:
@@ -360,35 +365,45 @@ class RffHs(nn.Module):
         '''
         prints things like training loss, test loss, etc
         '''
-        print('Epoch[{}/{}], kl: {:.6f}, elbo: {:.6f}'\
-                        .format(epoch, n_epochs, self.kl_divergence().item(), -self.loss(x,y).item()))
+        print('Epoch[{}/{}], kl: {:.6f}, likelihood: {:.6f}, elbo: {:.6f}'\
+                        .format(epoch, n_epochs, self.kl_divergence().item(), -self.loss(x,y,temperature=0).item(), -self.loss(x,y).item()))
 
 
 
-def train(model, optimizer, x, y, n_epochs, x_linear=None, n_warmup = 0, print_freq=None, frac_start_save=1):
+def train(model, optimizer, x, y, n_epochs, x_linear=None, n_warmup = 0, n_rep_opt=10, print_freq=None, frac_start_save=1):
     loss = torch.zeros(n_epochs)
     loss_best = 1e9 # Need better way of initializing to make sure it's big enough
     model.precompute(x, x_linear)
 
     for epoch in range(n_epochs):
 
+        with torch.no_grad():
+            print('before:', model.loss(x, y, x_linear=x_linear, temperature=1).item())
+
         # TEMPERATURE HARDECODED, NEED TO FIX
-        #temperature_kl = (epoch / 1000.) if epoch < 1000 else 1
-        #temperature = 0. if epoch < 9000 else 1
-        temperature = 1.
-        temperature_kl = 1.
+        #temperature_kl = 0. if epoch < n_epochs/2 else 1
+        #temperature_kl = epoch / (n_epochs/2) if epoch < n_epochs/2 else 1
+        temperature_kl = 0. # SET TO ZERO TO IGNORE KL
 
-        l = model.loss(x, y, x_linear=x_linear, temperature=temperature_kl)
+        for i in range(n_rep_opt):
+    
+            l = model.loss(x, y, x_linear=x_linear, temperature=temperature_kl)
 
-        # backward
-        optimizer.zero_grad()
-        l.backward()
-        optimizer.step()
+            # backward
+            optimizer.zero_grad()
+            l.backward(retain_graph=True)
+            optimizer.step()
+        print('temp: ', temperature_kl)
+
+        with torch.no_grad():
+            print('after:', model.loss(x, y, x_linear=x_linear, temperature=1).item())
 
         loss[epoch] = l.item()
 
         with torch.no_grad():
-            model.fixed_point_updates(x, y, x_linear=x_linear, temperature=temperature)
+            model.fixed_point_updates(x, y, x_linear=x_linear, temperature=1)
+            #pass
+            #model.layer_in.fixed_point_updates()
 
         if epoch > frac_start_save*n_epochs and loss[epoch] < loss_best: 
             print('saving...')

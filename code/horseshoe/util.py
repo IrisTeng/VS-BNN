@@ -78,8 +78,8 @@ def reparam(mu, var):
     return mu + eps * torch.sqrt(var)
 
 def entropy_invgamma(alpha, beta):
-    #return torch.sum(alpha + torch.log(beta) + torch.lgamma(alpha) - (1 + alpha) * torch.digamma(alpha))
-    return torch.sum(alpha - torch.log(beta) + torch.lgamma(alpha) + (1-alpha) * torch.digamma(alpha))
+    return torch.sum(alpha + torch.log(beta) + torch.lgamma(alpha) - (1 + alpha) * torch.digamma(alpha))
+    #return torch.sum(alpha - torch.log(beta) + torch.lgamma(alpha) + (1-alpha) * torch.digamma(alpha)) # Realized this was incorrect on 6/24/2020
 
 def cross_entropy_invgamma_alt(q_alpha, q_beta, p_alpha, p_beta):
     '''
@@ -92,6 +92,29 @@ def cross_entropy_invgamma_alt(q_alpha, q_beta, p_alpha, p_beta):
     '''
     return -torch.lgamma(q_alpha) - 2 * q_alpha * np.log(q_beta) + (-q_alpha - 1.) * \
         (torch.log(p_beta) - torch.digamma(p_alpha)) - (1. / q_beta ** 2) * (p_alpha / p_beta)
+
+def cross_entropy_invgamma_new(q_alpha, q_beta, p_alpha, p_beta):
+    '''
+    H(q, p) = E_q[-Ln p]
+
+    q(x) = InvGamma(q_alpha, q_beta)
+    p(x) = InvGamma(p_alpha, p_beta)
+
+    Derived on 6/25/2020
+    '''
+    return -p_alpha*torch.log(p_beta) + torch.lgamma(p_alpha) + (p_alpha+1)*(torch.log(q_beta) - torch.digamma(q_alpha)) + p_beta*q_alpha/q_beta
+
+
+def cross_entropy_lognormal_invgamma_new(q_mu, q_sig2, p_alpha, p_beta):
+    '''
+    H(q, p) = E_q[-Ln p] 
+
+    q(x) = LogNormal(q_mu, q_sig2) 
+    p(x) = InvGamma(p_alpha, p_beta)
+
+    Derived on 6/25/2020
+    '''
+
 
 def cross_entropy_invgamma(alpha_p, beta_p, alpha_q, beta_q):
     '''
@@ -143,6 +166,7 @@ def E_tau_lambda(logtau_a_prior, \
             torch.log(lambda_b) - torch.digamma(lambda_a)) - (1. / lambda_b_prior ** 2) * (lambda_a / lambda_b)
 
     return -torch.sum(E_tau_given_lambda) - torch.sum(E_lambda) # BC: Is the sign right?
+
 
 def EPw_Gaussian(mu, sig2):
     """"int q(z) log p(z) dz, assuming gaussian q(z) and p(z)"""
