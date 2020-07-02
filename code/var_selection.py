@@ -63,6 +63,7 @@ print('observational noises: ', sig2_list)
 
 ## allocate space for results: obs x dim_in x rff_dim x sig2 x rep x input
 res_shape = (len(n_obs_list), len(dim_in_list), len(rff_dim_list), len(sig2_list), args.n_rep, np.max(dim_in_list))
+
 res = {
     'psi_mean': np.full(res_shape, np.nan),
     'psi_var': np.full(res_shape, np.nan),
