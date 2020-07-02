@@ -102,18 +102,23 @@ def cross_entropy_invgamma_new(q_alpha, q_beta, p_alpha, p_beta):
 
     Derived on 6/25/2020
     '''
-    return -p_alpha*torch.log(p_beta) + torch.lgamma(p_alpha) + (p_alpha+1)*(torch.log(q_beta) - torch.digamma(q_alpha)) + p_beta*q_alpha/q_beta
+    return torch.sum(-p_alpha*torch.log(p_beta) + torch.lgamma(p_alpha) + (p_alpha+1)*(torch.log(q_beta) - torch.digamma(q_alpha)) + p_beta*q_alpha/q_beta)
 
 
-def cross_entropy_lognormal_invgamma_new(q_mu, q_sig2, p_alpha, p_beta):
+def cross_entropy_cond_lognormal_invgamma_new(q_mu, q_sig2, q_alpha, q_beta, p_alpha):
     '''
-    H(q, p) = E_q[-Ln p] 
+    H(q, p) = E_q[-Ln p(z | x)] 
 
-    q(x) = LogNormal(q_mu, q_sig2) 
-    p(x) = InvGamma(p_alpha, p_beta)
+    p(z | x) = InvGamma(p_alpha, 1/x)
+
+    q(z,x) = q(z)q(x)
+    q(z) = LogNormal(q_mu, q_sig2) 
+    q(x) = InvGamma(q_alpha, q_beta)
 
     Derived on 6/25/2020
     '''
+
+    return torch.sum(p_alpha*(torch.log(q_beta) - torch.digamma(q_alpha)) + torch.lgamma(p_alpha) + (p_alpha+1)*q_mu + q_alpha / q_beta * torch.exp(-q_mu + 0.5*q_sig2))
 
 
 def cross_entropy_invgamma(alpha_p, beta_p, alpha_q, beta_q):

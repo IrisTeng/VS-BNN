@@ -143,11 +143,13 @@ class RffHsLayer(nn.Module):
         # initialize variational parameters
 
         # layer scale
-        self.lognu_mu.data = torch.log(np.abs(self.b_g*torch.randn(1) / torch.randn(1)))
+        #self.lognu_mu.data = torch.log(np.abs(self.b_g*torch.randn(1) / torch.randn(1)))
+        self.lognu_mu.data = torch.log(1+1e-2*torch.randn(self.lognu_mu.shape))
         self.lognu_logsig2.data.normal_(-9, 1e-2)
 
         # input unit scales
-        self.logeta_mu.data = torch.log(np.abs(self.b_0*torch.randn(self.logeta_mu.shape) / torch.randn(self.logeta_mu.shape)))
+        #self.logeta_mu.data = torch.log(np.abs(self.b_0*torch.randn(self.logeta_mu.shape) / torch.randn(self.logeta_mu.shape)))
+        self.logeta_mu.data = torch.log(1+1e-2*torch.randn(self.logeta_mu.shape))
         self.logeta_logsig2.data.normal_(-9, 1e-2)
 
         self.fixed_point_updates()
@@ -198,6 +200,8 @@ class RffHsLayer(nn.Module):
 
     def cross_entropy(self):
         '''H(q,p) = E_q[ -p(z) ]'''
+
+        '''
         ce = 0
 
         # layer scale
@@ -211,6 +215,17 @@ class RffHsLayer(nn.Module):
             self.psi_a_prior, self.psi_b_prior, \
             self.logeta_mu, self.logeta_logsig2, \
             self.psi_a, self.psi_b)
+
+        return ce
+        '''
+
+        ce = 0
+
+        ce += util.cross_entropy_cond_lognormal_invgamma_new(q_mu=self.lognu_mu, q_sig2=self.lognu_logsig2.exp(), q_alpha=self.vtheta_a, q_beta=self.vtheta_b, p_alpha=self.lognu_a_prior) 
+        ce += util.cross_entropy_invgamma_new(q_alpha=self.vtheta_a, q_beta=self.vtheta_b, p_alpha=self.vtheta_a_prior, p_beta=self.vtheta_b_prior)
+
+        ce += util.cross_entropy_cond_lognormal_invgamma_new(q_mu=self.logeta_mu, q_sig2=self.logeta_logsig2.exp(), q_alpha=self.psi_a, q_beta=self.psi_b, p_alpha=self.logeta_a_prior) 
+        ce += util.cross_entropy_invgamma_new(q_alpha=self.psi_a, q_beta=self.psi_b, p_alpha=self.psi_a_prior, p_beta=self.psi_b_prior)
 
         return ce
 

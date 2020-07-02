@@ -377,13 +377,13 @@ def train(model, optimizer, x, y, n_epochs, x_linear=None, n_warmup = 0, n_rep_o
 
     for epoch in range(n_epochs):
 
-        with torch.no_grad():
-            print('before:', model.loss(x, y, x_linear=x_linear, temperature=1).item())
+        #with torch.no_grad():
+        #    print('before:', model.loss(x, y, x_linear=x_linear, temperature=1).item())
 
         # TEMPERATURE HARDECODED, NEED TO FIX
         #temperature_kl = 0. if epoch < n_epochs/2 else 1
-        #temperature_kl = epoch / (n_epochs/2) if epoch < n_epochs/2 else 1
-        temperature_kl = 0. # SET TO ZERO TO IGNORE KL
+        temperature_kl = epoch / (n_epochs/2) if epoch < n_epochs/2 else 1
+        #temperature_kl = 0. # SET TO ZERO TO IGNORE KL
 
         for i in range(n_rep_opt):
     
@@ -393,10 +393,10 @@ def train(model, optimizer, x, y, n_epochs, x_linear=None, n_warmup = 0, n_rep_o
             optimizer.zero_grad()
             l.backward(retain_graph=True)
             optimizer.step()
-        print('temp: ', temperature_kl)
+        #print('temp: ', temperature_kl)
 
-        with torch.no_grad():
-            print('after:', model.loss(x, y, x_linear=x_linear, temperature=1).item())
+        #with torch.no_grad():
+        #    print('after:', model.loss(x, y, x_linear=x_linear, temperature=1).item())
 
         loss[epoch] = l.item()
 
