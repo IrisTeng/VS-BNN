@@ -61,19 +61,21 @@ def rbf_toy(n_obs, dim_in, sig2=.01, seed_f=8, seed_zy=0):
 
     return Z, Y.reshape(-1,1), sig2
 
-def bkmr_toy(n_obs, dim_in, sig2=.5):
+def bkmr_toy(n_obs, dim_in, sig2=.5, seed=0):
     '''
     generates toy data by running SimData function from bkrm R package
     requires rpy2 to be installed
     Note: random seed not implemented
     '''
-    r = robjects.r
+    #r = robjects.r
     bkmr = importr('bkmr') 
+    base = importr('base') 
 
     n = robjects.IntVector([n_obs])
     M = robjects.IntVector([dim_in])
     sigsq_true = robjects.FloatVector([sig2])
 
+    base.set_seed(robjects.FloatVector([seed]))
     out = bkmr.SimData(n=n, M=M, beta_true=0, sigsq_true = sigsq_true, Zgen="realistic")
 
     Z = np.asarray(out.rx2['Z'])
@@ -112,8 +114,18 @@ def workshop_data(n_obs_samp=None, dim_in_samp=None, dir_in='../data/workshop', 
     return Z, X, Y.reshape(-1,1)
     
 
-def load_data(toy_name, n_obs, dim_in, seed=0):
+def load_data(toy_name, n_obs, dim_in, sig2=None, seed=0):
     '''
+    inputs:
+        toy_name: 
+        n_obs: number of observations
+        dim_in: number of inputs
+        sig2: observation variance (set to None to use default)
+        seed: random seed
+
+    Note that not all toys use all inputs or use all inputs in the same way 
+    (e.g. 'workshop' has unknown sig2 and randomly samples features and observations if less than max)
+
     returns:
         Z: mixture components
         X: covariates
@@ -121,16 +133,16 @@ def load_data(toy_name, n_obs, dim_in, seed=0):
         sig2: observation variance
     '''
     if toy_name == 'sin':
-        Z, Y, sig2 = sin_toy(n_obs, dim_in, seed=seed)
+        Z, Y, sig2 = sin_toy(n_obs, dim_in, sig2, seed)
         X = None
     elif toy_name == 'rbf':
-        Z, Y, sig2 = rbf_toy(n_obs, dim_in, seed_zy=seed)
+        Z, Y, sig2 = rbf_toy(n_obs, dim_in, sig2, seed_zy=seed)
         X = None
     elif toy_name == 'bkmr':
-        Z, Y, sig2 = rbf_toy(n_obs, dim_in)
+        Z, Y, sig2 = rbf_toy(n_obs, dim_in, sig2, seed)
         X = None
     elif toy_name == 'workshop':
-        Z, X, Y = workshop_data(n_obs, dim_in, seed=seed)
+        Z, X, Y = workshop_data(n_obs, dim_in, seed)
         sig2 = None
     else:
         print('toy not recognized')
@@ -195,6 +207,7 @@ def split_into_batches(X, batch_size):
 
 ## plotting
 
+'''
 def plot_results_grid(data, dim_in_list, n_obs_list, fig=None, ax=None):
     if fig is None and ax is None:
         fig, ax = plt.subplots(1,data.shape[2], figsize=(16,4), sharex=True, sharey=True)
@@ -209,6 +222,26 @@ def plot_results_grid(data, dim_in_list, n_obs_list, fig=None, ax=None):
     plt.xticks(np.arange(len(dim_in_list)), labels=dim_in_list)
 
     plt.yticks(np.arange(len(n_obs_list)), labels=n_obs_list)
+
+    fig.colorbar(pcm, ax=ax[:], shrink=0.6)
+
+    return fig, ax 
+'''
+
+def plot_results_grid(data, x_vals, y_vals, x_lab, y_lab, fig=None, ax=None):
+    if fig is None and ax is None:
+        fig, ax = plt.subplots(1,data.shape[2], figsize=(16,4), sharex=True, sharey=True)
+    
+    vmax = np.nanmax(data)
+    ax[0].set_ylabel(y_lab)
+    for i in range(data.shape[2]):
+        pcm=ax[i].imshow(data[:,:,i],vmin=0, vmax=vmax)
+        ax[i].set_title('X_%d'%i)
+        ax[i].set_xlabel(x_lab)
+
+    plt.xticks(np.arange(len(x_vals)), labels=x_vals)
+
+    plt.yticks(np.arange(len(y_vals)), labels=y_vals)
 
     fig.colorbar(pcm, ax=ax[:], shrink=0.6)
 
