@@ -227,6 +227,46 @@ class BNN(nn.Module):
         print('Epoch[{}/{}], kl: {:.6f}, elbo: {:.6f}'\
                         .format(epoch, n_epochs, self.kl_divergence().item(), -self.loss(x,y).item()))
 
+
+class Rff(nn.Module):
+    """
+    Single layer RFF model
+    """
+    def __init__(self, dim_in, dim_out, sig2_inv, dim_hidden=50, \
+        **kwargs):
+        super(Rff, self).__init__()
+        self.dim_in = dim_in
+        self.dim_out = dim_out
+        self.dim_hidden = dim_hidden
+        self.register_buffer('sig2_inv', torch.tensor(sig2_inv).clone().detach())
+
+        # layers
+        self.layer_in = layers.RffLayer(self.dim_in, self.dim_hidden)
+        self.layer_out = layers.LinearLayer(self.dim_hidden, prior_sig2=10/self.dim_in, sig2_y=1/sig2_inv)
+
+    def forward(self, x, x_linear=None, weights_type='sample'):
+        h = self.layer_in(x)
+        return self.layer_out(h, weights_type=weights_type)
+
+    def fixed_point_updates(self, x, y):   
+        h = self.layer_in(x) # hidden units
+        self.layer_out.fixed_point_updates(h, y) # conjugate update of output weights 
+
+    def init_parameters(self, seed=None):
+        if seed is not None:
+            torch.manual_seed(seed)
+
+        self.layer_in.init_parameters()
+        self.layer_out.init_parameters()
+
+    def reinit_parameters(self, x, y, n_reinit=1):
+        seeds = torch.zeros(n_reinit).long().random_(0, 1000)
+        losses = torch.zeros(n_reinit)
+        for i in range(n_reinit):
+            self.init_parameters(seeds[i])
+            losses[i] = self.loss(x, y)
+
+        self.init_parameters(seeds[torch.argmin(losses).item()])
         
 class RffHs(nn.Module):
     """

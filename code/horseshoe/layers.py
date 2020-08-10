@@ -50,8 +50,12 @@ class LinearLayer(nn.Module):
         prior_sig2inv_mat = 1/self.prior_sig2*torch.eye(self.dim_in)
         prior_mu_vec = torch.ones(self.dim_in,1)*self.prior_mu
 
-        self.sig2 = torch.pinverse(prior_sig2inv_mat + x.transpose(0,1)@x/self.sig2_y)
-        self.mu = (self.sig2 @ (prior_sig2inv_mat@prior_mu_vec + x.transpose(0,1)@y/self.sig2_y)).transpose(0,1)
+        try:
+            self.sig2 = torch.pinverse(prior_sig2inv_mat + x.transpose(0,1)@x/self.sig2_y)
+            self.mu = (self.sig2 @ (prior_sig2inv_mat@prior_mu_vec + x.transpose(0,1)@y/self.sig2_y)).transpose(0,1)
+        except:
+            print('Error: cannot update LinearLayer, skipping update')
+            pass
         
     def forward(self, x, weights_type='mean'):
         '''
@@ -75,16 +79,21 @@ class RffLayer(nn.Module):
     """
     def __init__(self, dim_in, dim_out, **kwargs):
         super(RffLayer, self).__init__()
+        self.dim_in = dim_in
+        self.dim_out = dim_out
+
         self.register_buffer('w', torch.empty(dim_out, dim_in))
         self.register_buffer('b', torch.empty(dim_out))
+
         self.sample_features()
 
     def sample_features(self):
-        self.w.normal_(0,1)
-        self.b.normal_(0,1)
+        # sample random weights for RFF features
+        self.w.normal_(0, 1)
+        self.b.uniform_(0, 2*pi)
 
     def forward(self, x):
-        return sqrt(2/self.dim_out)*torch.cos(F.linear(x, self.w, self.b))
+        return sqrt(2/self.dim_in)*torch.cos(F.linear(x, self.w, self.b))
 
 
 class RffHsLayer(nn.Module):
@@ -156,7 +165,7 @@ class RffHsLayer(nn.Module):
 
     def sample_features(self):
         # sample random weights for RFF features
-        self.w.normal_(0,1)
+        self.w.normal_(0, 1)
         self.b.uniform_(0, 2*pi)
 
     def forward(self, x, sample=True):

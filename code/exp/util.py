@@ -76,11 +76,12 @@ def bkmr_toy(n_obs, dim_in, sig2=.5, seed=0):
     sigsq_true = robjects.FloatVector([sig2])
 
     base.set_seed(robjects.FloatVector([seed]))
-    out = bkmr.SimData(n=n, M=M, beta_true=0, sigsq_true = sigsq_true, Zgen="realistic")
+    #out = bkmr.SimData(n=n, M=M, beta_true=0, sigsq_true = sigsq_true, Zgen="realistic")
+    out = bkmr.SimData(n=n, M=M, beta_true=0, sigsq_true = sigsq_true)
 
-    Z = np.asarray(out.rx2['Z'])
-    Y = np.asarray(out.rx2['y'])
-    
+    Z = np.ascontiguousarray(out.rx2['Z'])
+    Y = np.ascontiguousarray(out.rx2['y'])
+
     return Z, Y.reshape(-1,1), sig2
 
 def workshop_data(n_obs_samp=None, dim_in_samp=None, dir_in='../data/workshop', seed=0):
@@ -139,7 +140,7 @@ def load_data(toy_name, n_obs, dim_in, sig2=None, seed=0):
         Z, Y, sig2 = rbf_toy(n_obs, dim_in, sig2, seed_zy=seed)
         X = None
     elif toy_name == 'bkmr':
-        Z, Y, sig2 = rbf_toy(n_obs, dim_in, sig2, seed)
+        Z, Y, sig2 = bkmr_toy(n_obs, dim_in, sig2, seed)
         X = None
     elif toy_name == 'workshop':
         Z, X, Y = workshop_data(n_obs, dim_in, seed)
@@ -259,9 +260,12 @@ def plot_results_dist(data, dim_in, n_obs_list, data_true=None, fig=None, ax=Non
 
     if fig is None and ax is None:
         fig,ax = plt.subplots(len(n_obs_list),1,figsize=(dim_in*2,16),sharex=True,sharey=True)
+    if len(n_obs_list)==1: ax = [ax]
 
     ax[-1].set_xlabel('variable')
-    ax[0].legend([plt.Line2D([0], [0], color='red')],['"truth"'])
+    
+    if data_true is not None:
+        ax[0].legend([plt.Line2D([0], [0], color='red')],['"truth"'])
 
     for j, n_obs in enumerate(n_obs_list):
         sns.violinplot(data=data[j,:,:], ax=ax[j])
@@ -273,6 +277,57 @@ def plot_results_dist(data, dim_in, n_obs_list, data_true=None, fig=None, ax=Non
     ax[0].set_xlim(-.5,dim_in-.5)
     return fig, ax
 
+
+def plot_slice(f_sampler, x, y, quantile=.5, dim=0, n_samp=500, ax=None):
+    '''
+
+    x: (N,D) training inputs
+    y: (N,1) or (N,) training outputs
+    quantile: Quantile of fixed x variables to use in plot
+    dim: dimension of x to plot on x-axis
+
+    Everything should be numpy
+    '''
+
+    if ax is None:
+        fig, ax = plt.subplots()
+
+    # x-axis
+    midx = (x[:,dim].min() + x[:,dim].max())/2
+    dx = x[:,dim].max() - x[:,dim].min()
+    x_plot = np.linspace(midx - .75*dx, midx + .75*dx, 100)
+
+    x_plot_all = np.quantile(x, q=quantile, axis=0)*np.ones((x_plot.shape[0], x.shape[1]))
+    x_plot_all[:, dim] = x_plot
+
+    # sample from model
+    f_samp_plot = np.zeros((n_samp, x_plot.shape[0]))
+    for i in range(n_samp):
+        f_samp_plot[i,:] = f_sampler(x_plot_all).reshape(-1)
+
+    # plot
+    ax.scatter(x[:,dim], y) # training data
+    ax.plot(x_plot, np.mean(f_samp_plot, 0)) # posterior mean
+    for q in [.025, .05, .1]:
+        ci = np.quantile(f_samp_plot, [q, 1-q], axis=0)
+        ax.fill_between(x_plot_all[:,dim].reshape(-1), ci[0,:], ci[1,:], alpha=.1, color='blue')
+
+
+def plot_slices(f_sampler, x, y, quantile=.5, n_samp=500, figsize=(4,4)):  
+    dim_in = x.shape[1]  
+    fig, ax = plt.subplots(1, dim_in, figsize=figsize, sharey=True)
+
+    if dim_in>1:
+        ax[0].set_ylabel('y')
+    else:
+        ax.set_ylabel('y')
+        
+    fig.suptitle("Posterior predictive (1d slices)")
+    for dim in range(dim_in):
+        ax_dim = ax[dim] if dim_in>1 else ax 
+        plot_slice(f_sampler, x, y, quantile=quantile, dim=dim, n_samp=n_samp, ax=ax_dim)
+        ax_dim.set_xlabel('x'+str(dim))
+    return fig, ax
 
 ## miscellaneous
 

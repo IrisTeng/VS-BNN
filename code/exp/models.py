@@ -5,11 +5,23 @@ from tensorflow import keras
 import matplotlib.pyplot as plt
 import os
 import sys
+from math import pi, log, sqrt
 
 sys.path.append('../')
 import exp.util as util
 import exp.kernelized as kernel_layers
 
+# for horseshoe model
+import torch
+import torch.nn.functional as F
+sys.path.append('./horseshoe')
+from horseshoe.networks import RffHs, Rff
+from horseshoe.networks import train as train_rffhs
+torch.set_default_dtype(torch.float64)
+
+# for bkmr
+import rpy2.robjects as robjects
+from rpy2.robjects.packages import importr
 
 class GPyVarImportance(object):
     def __init__(self, X, Y, sig2, opt_sig2=True, opt_kernel_hyperparam=True, lengthscale=1.0, variance=1.0):
@@ -53,7 +65,9 @@ class GPyVarImportance(object):
             
         return psi_mean, psi_var
 
-
+    def sample_f_post(self, x):
+        # inputs and outputs are numpy arrays
+        return self.model.posterior_samples_f(x, size=1)
 
 class RffVarImportance(object):
     def __init__(self, X):
@@ -159,3 +173,201 @@ class RffVarImportance(object):
             psi_var[l] = np.var(psi_samp)
 
         return psi_mean, psi_var
+
+    def sample_f_post(self, x):
+        # inputs and outputs are numpy arrays
+        D = self.RFF_weight.shape[1]
+        phi = np.sqrt(2. / D) * np.cos(np.matmul(x, self.RFF_weight) + self.RFF_bias)
+        beta_samp = np.random.multivariate_normal(self.beta, self.Sigma_beta, size=1).T
+        return np.matmul(phi, beta_samp)
+
+
+class RffVarImportancePytorch(object):
+    def __init__(self, X, Y, sig2_inv, dim_in=1, dim_out=1, dim_hidden=50):
+        super().__init__()
+
+        self.X = torch.from_numpy(X)
+        self.Y = torch.from_numpy(Y)
+
+        self.model = Rff(dim_in=X.shape[1], dim_out=Y.shape[1], sig2_inv=sig2_inv, dim_hidden=dim_hidden)
+        
+    def train(self):
+        self.model.fixed_point_updates(self.X, self.Y)
+
+    def estimate_psi(self, X=None, n_samp=1000):
+        '''
+        Use automatic gradients
+
+        estimates mean and variance of variable importance psi
+        X:  inputs to evaluate gradient
+        n_samp:  number of MC samples
+        '''
+
+        X = torch.from_numpy(X)
+        X.requires_grad = True
+
+        psi_mean = np.zeros(self.model.dim_in)
+        psi_var = np.zeros(self.model.dim_in)
+
+        psi_samp = torch.zeros((n_samp, self.model.dim_in))
+        for i in range(n_samp):
+
+            f = self.model(X, weights_type='sample')
+            torch.sum(f).backward()
+            psi_samp[i,:] = torch.mean(X.grad**2,0)
+            X.grad.zero_()
+
+        psi_mean = torch.mean(psi_samp, 0)
+        psi_var = torch.var(psi_samp, 0)
+
+        return psi_mean.numpy(), psi_var.numpy()
+
+
+    def sample_f_post(self, x):
+        # inputs and outputs are numpy arrays
+        return self.model(torch.from_numpy(x), weights_type='sample').detach().numpy()
+
+class RffHsVarImportance(object):
+    def __init__(self, X, Y, sig2_inv, dim_in=1, dim_out=1, dim_hidden=50, \
+        infer_noise=False, sig2_inv_alpha_prior=None, sig2_inv_beta_prior=None, \
+        linear_term=False, linear_dim_in=None):
+        super().__init__()
+
+        self.X = torch.from_numpy(X)
+        self.Y = torch.from_numpy(Y)
+
+        self.model = RffHs(dim_in=X.shape[1], dim_out=Y.shape[1], dim_hidden=dim_hidden, \
+            infer_noise=infer_noise, sig2_inv=sig2_inv, sig2_inv_alpha_prior=sig2_inv_alpha_prior, sig2_inv_beta_prior=sig2_inv_beta_prior, \
+            linear_term=linear_term, linear_dim_in=linear_dim_in)
+        
+    def train(self, lr=.001, n_epochs=100):
+
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
+        self.model.reinit_parameters(self.X, self.Y, n_reinit=10) 
+        elbo = -train_rffhs(self.model, optimizer, self.X, self.Y, n_epochs=n_epochs, n_rep_opt=25, print_freq=1)
+
+
+    def estimate_psi(self, X=None, n_samp=1000):
+        '''
+        Use automatic gradients
+
+        estimates mean and variance of variable importance psi
+        X:  inputs to evaluate gradient
+        n_samp:  number of MC samples
+        '''
+
+        X = torch.from_numpy(X)
+        X.requires_grad = True
+
+        psi_mean = np.zeros(self.model.dim_in)
+        psi_var = np.zeros(self.model.dim_in)
+
+        psi_samp = torch.zeros((n_samp, self.model.dim_in))
+        for i in range(n_samp):
+
+            f = self.model(X, sample_input_layer=True, weights_type='sample')
+            torch.sum(f).backward()
+            psi_samp[i,:] = torch.mean(X.grad**2,0)
+            X.grad.zero_()
+
+        psi_mean = torch.mean(psi_samp, 0)
+        psi_var = torch.var(psi_samp, 0)
+
+        return psi_mean.numpy(), psi_var.numpy()
+
+
+    def estimate_psi2(self, X=None, n_samp=1000):
+        '''
+        estimates mean and variance of variable importance psi
+        X:  inputs to evaluate gradient
+        n_samp:  number of MC samples
+        '''
+        with torch.no_grad():
+
+            #breakpoint()
+
+            dist_nu = torch.distributions.log_normal.LogNormal(loc=self.model.layer_in.lognu_mu, 
+                                                               scale=self.model.layer_in.lognu_logsig2.exp().sqrt())
+            
+            dist_eta = torch.distributions.log_normal.LogNormal(loc=self.model.layer_in.logeta_mu, 
+                                                                scale=self.model.layer_in.logeta_logsig2.exp().sqrt())
+            
+            dist_beta = torch.distributions.multivariate_normal.MultivariateNormal(loc=self.model.layer_out.mu, 
+                                                                                   covariance_matrix=self.model.layer_out.sig2)
+
+            psi_mean = np.zeros(self.model.dim_in)
+            psi_var = np.zeros(self.model.dim_in)
+            for l in range(self.model.dim_in):
+
+                # TO DO: replace loop for efficiency
+                grad_samp = torch.zeros((n_samp, X.shape[0]))
+                for i in range(n_samp):
+
+                    samp_nu = dist_nu.sample()
+                    samp_eta = dist_eta.sample()
+                    samp_beta = dist_beta.sample()
+
+                    nu_eta_w = samp_nu*samp_eta*self.model.layer_in.w
+
+                    grad_samp[i,:] = (-sqrt(2/self.model.dim_out) \
+                                     *torch.sin(F.linear(torch.from_numpy(X), nu_eta_w, self.model.layer_in.b)) \
+                                     @ torch.diag(nu_eta_w[:,l]) \
+                                     @ samp_beta.T).reshape(-1)
+
+                psi_samp = torch.mean(grad_samp**2,1)
+                psi_mean[l] = torch.mean(psi_samp)
+                psi_var[l] = torch.var(psi_samp)
+        breakpoint()
+
+        return psi_mean.numpy(), psi_var.numpy()
+
+    def dist_scales(self):
+        '''
+        returns mean and variance parameters of input-specific scale eta (not log eta)
+        '''
+
+        logeta_mu = self.model.layer_in.logeta_mu.detach()
+        logeta_sig2 = self.model.layer_in.logeta_logsig2.exp().detach()
+
+        eta_mu = torch.exp(logeta_mu + logeta_sig2/2)
+        eta_sig2 = (torch.exp(logeta_sig2)-1)*torch.exp(2*logeta_mu+logeta_sig2)
+
+        return eta_mu.numpy(), eta_sig2.numpy()
+
+    def sample_f_post(self, x):
+        # inputs and outputs are numpy arrays
+        return self.model(torch.from_numpy(x), sample_input_layer=True, weights_type='sample').detach().numpy()
+
+
+class BKMRVarImportance(object):
+    def __init__(self, Z, Y, sig2):
+        super().__init__()
+
+        self.bkmr = importr('bkmr') 
+        self.base = importr('base') 
+        self.sigsq_true = robjects.FloatVector([sig2])
+
+        Zvec = robjects.FloatVector(Z.reshape(-1))
+        self.Z = robjects.r.matrix(Zvec, nrow=Z.shape[0], ncol=Z.shape[1], byrow=True)
+
+        Yvec = robjects.FloatVector(Y.reshape(-1))
+        self.Y = robjects.r.matrix(Yvec, nrow=Y.shape[0], ncol=Y.shape[1], byrow=True)
+        
+    def train(self, n_samp=5000):
+
+        self.base.set_seed(robjects.FloatVector([1]))
+        self.fitkm = self.bkmr.kmbayes(y = self.Y, Z = self.Z, iter = robjects.IntVector([n_samp]), verbose = robjects.vectors.BoolVector([False]), varsel = robjects.vectors.BoolVector([True]))
+
+    def estimate_psi(self, X=None, n_samp=None):
+        '''
+        estimates mean and variance of variable importance psi
+        X:  inputs to evaluate gradient
+        n_samp:  number of MC samples
+        '''
+
+        out = self.bkmr.ExtractPIPs(self.fitkm)
+        
+        pip = np.ascontiguousarray(out.rx2('PIP'))
+        pip_var = np.zeros_like(pip)
+        print('pip:', pip)
+        return pip, pip_var
