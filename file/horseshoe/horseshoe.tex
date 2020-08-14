@@ -18,6 +18,7 @@
 
 \usepackage{cancel}
 \usepackage{float}
+\usepackage{xcolor}
 
 %\usepackage[demo]{graphicx}
 \usepackage{subfig}
@@ -42,23 +43,22 @@
 
 Network:
 \begin{align}
-f(\x_n; \{s_d\}, \{\beta_k\}, \{\w_k\}, b ) &=\sum_{k=1}^K \beta_k \Phi(\x_n; s_d, \w_k, b ) \\
-\Phi(\x_n; s_d, \w_k, b) &= \sqrt{2}\cos\left(  \sum_{d=1}^D s_d w_{k,d}, x_{n,d} \right)
+f(\x_n; \nu, \{\tau_d\}, \{\beta_k\}, \{\w_k\}, b ) &=\sum_{k=1}^K \beta_k \Phi(\x_n; \nu, \tau_d, \w_k, b ) \\
+\Phi(\x_n; s_d, \w_k, b) &= \sqrt{2}\cos\left(  \sum_{d=1}^D \nu \tau_d w_{k,d} x_{n,d} \right)
 \end{align}
 In matrix notation:
 \begin{align}
 f(X; S, \bbeta) &= \Phi(X; S, W, b)\bbeta \\
 \Phi(X; S, W, b) &= \sqrt{2}\cos(X S W + \b) \\
 \end{align}
-where $S=\text{diag}(s_1,\dotsc,s_D)$ and $W=[\w_1^T,\dotsc,\w_K^T]^T$.
+where $S=\text{diag}(\nu \tau_d,\dotsc,\nu \tau_D)$ and $W=[\w_1^T,\dotsc,\w_K^T]^T$.
 
 Model:
 \begin{align}
 \beta_k &\sim \mathcal{N}(0, \sigma^2_\beta), \quad k=1,\dotsc,K \\
-s_d \given \tau_d, \nu &\sim \mathcal{N}(0, \tau_d^2 \nu^2), \quad d=1,\dotsc,D \\
-\tau_d &\sim C^+(0, b_\tau)\ \\
+\tau_d &\sim C^+(0, b_\tau), \quad d=1,\dotsc,D \\
 \nu &\sim C^+(0, b_\nu) \\
-y_n \given \x_n, \{\beta_k\}, \{s_d\}, \{\w_k\}, b &\sim \mathcal{N}(f(\x_n; \{s_d\}, \{\beta_k\}), \sigma^2), \quad n=1,\dotsc,N \\
+y_n \given \x_n, \{\beta_k\}, \nu, \{\tau_d\}, \{\w_k\}, b &\sim \mathcal{N}(f(\x_n; \nu, \{\tau_d\}, \{\beta_k\}), \sigma^2), \quad n=1,\dotsc,N 
 \end{align}
 
 To improve inference, we add auxiliary variables $\{ \lambda_d \}_{d=1}^D$ and $\vartheta$:
@@ -69,15 +69,14 @@ p(\nu, \vartheta) &= p(\nu \given \vartheta) p(\vartheta) = \text{InvGamma}\left
 \end{align}
 
 \section{Variational approximation}
-We approximate the posterior distribution of $\{s_d\}$, $\{\tau_d\}$, $\nu$, $\{\lambda_d\}$, and $\vartheta$ with a fully factorized variational distribution. We use a normal distribution for each $s_d$, a log normal distribution for $\nu$ and each $\tau_d$, and an inverse Gamma distribution for $\vartheta$ and each $\lambda_k$.
+We approximate the posterior distribution of $\{\tau_d\}$, $\nu$, $\{\lambda_d\}$, and $\vartheta$ with a fully factorized variational distribution. We use a log normal distribution for $\nu$ and each $\tau_d$, and an inverse Gamma distribution for $\vartheta$ and each $\lambda_k$.
 
 \section{Inference}
 
 For $s=1,\dotsc$
 \begin{itemize}
-	\item Sample $\{\beta_k^{(s)} \}$ from the posterior conditional on $\{s_d^{(s)}\}$ (conjugate posterior)
-	\item Update the variational parameters for $\{s_d\}$, $\{\tau_d\}$, $\nu$, $\{\lambda_d\}$, and $\vartheta$ by optimizing the ELBO conditional on $\{\beta_k^{(s)} \}$ for a fixed number of steps.
-	\item Sample $\{s_d^{(s)}\}$ from its variational posterior.
+	\item Sample $\{\beta_k^{(s)} \}$ from the posterior conditional on $\nu$ and $\{\tau_d^{(s)}\}$ (conjugate).
+	\item Update the variational parameters for $\{\tau_d\}$, $\nu$, $\{\lambda_d\}$, and $\vartheta$ by optimizing the ELBO conditional on $\{\beta_k^{(s)} \}$ for a fixed number of steps.
 \end{itemize}
 
 \end{document}  
