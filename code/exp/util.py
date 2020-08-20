@@ -11,21 +11,24 @@ import sys
 import rpy2.robjects as robjects
 from rpy2.robjects.packages import importr
 
-def standardize_data(original_x_train, original_y_train, original_x_test, original_y_test,
+def standardize_data(original_x_train, original_y_train, 
+                     original_x_test=None, original_y_test=None,
                      mean_x=None, std_x=None, mean_y=None, std_y=None):
-    if mean_x is not None and std_x is not None:
-        mean_x, std_x = np.mean(original_x_train), np.std(original_x_train)
+    if mean_x is None and std_x is None:
+        mean_x, std_x = np.mean(original_x_train,0), np.std(original_x_train,0)
 
-    if mean_y is not None and std_y is not None:
-        mean_y, std_y = np.mean(original_y_train), np.std(original_y_train)
+    if mean_y is None and std_y is None:
+        mean_y, std_y = np.mean(original_y_train,0), np.std(original_y_train,0)
 
     train_x = (original_x_train - mean_x) / std_x
     train_y = ((original_y_train - mean_y) / std_y).reshape(-1, 1)
 
-    test_x = ((original_x_test - mean_x) / std_x).reshape(-1, 1)
-    test_y = ((original_y_test - mean_y) / std_y).reshape(-1, 1)
-
-    return train_x, train_y, test_x, test_y
+    if original_x_test is not None and original_y_test is not None:
+        test_x = ((original_x_test - mean_x) / std_x).reshape(-1, 1)
+        test_y = ((original_y_test - mean_y) / std_y).reshape(-1, 1)
+        return train_x, train_y, test_x, test_y
+    else:
+        return train_x, train_y
 
 ## toy data
 
@@ -60,6 +63,33 @@ def rbf_toy(n_obs, dim_in, sig2=.01, seed_f=8, seed_zy=0):
     Y,_ = m.predict(Z[:,0].reshape(-1,1)) + r_zy.normal(0,sig2,(n_obs,1))
 
     return Z, Y.reshape(-1,1), sig2
+
+def sparse_linear_toy(n_obs=200, dim_in=5, sig2=.1**2, n_nonzero=2, seed_x=0, seed_beta=0, seed_sig2=0):
+    '''
+    Based on Matlab example: https://www.mathworks.com/help/stats/lasso-regularization.html
+    '''
+    r_x = np.random.RandomState(seed_x) 
+    r_beta = np.random.RandomState(seed_beta)  
+    r_sig2 = np.random.RandomState(seed_sig2)  
+
+    X = np.zeros((n_obs, dim_in))
+    for ii in range(dim_in):
+        X[:,ii] = r_x.exponential(1/(ii+1), size=n_obs)
+
+    if n_nonzero==2:
+        # use same coefficients as matlab function
+        beta = np.zeros(dim_in)
+        beta[1] = 2
+        beta[3] = -3
+    else:
+        # otherwise random (integer) coefficients
+        beta = r_beta.normal(scale=2,size=dim_in).astype(np.int64)
+
+    Y = X @ beta.reshape(-1,1) + r_sig2.randn(n_obs).reshape(-1,1)*np.sqrt(sig2)
+
+    return X, Y.reshape(-1,1), sig2
+
+
 
 def bkmr_toy(n_obs, dim_in, sig2=.5, seed=0):
     '''
@@ -138,6 +168,9 @@ def load_data(toy_name, n_obs, dim_in, sig2=None, seed=0):
         X = None
     elif toy_name == 'rbf':
         Z, Y, sig2 = rbf_toy(n_obs, dim_in, sig2, seed_zy=seed)
+        X = None
+    elif toy_name == 'sparse_linear':
+        Z, Y, sig2 = sparse_linear_toy(n_obs, dim_in, sig2, seed_x=seed)
         X = None
     elif toy_name == 'bkmr':
         Z, Y, sig2 = bkmr_toy(n_obs, dim_in, sig2, seed)
@@ -321,7 +354,7 @@ def plot_slices(f_sampler, x, y, quantile=.5, n_samp=500, figsize=(4,4)):
         ax[0].set_ylabel('y')
     else:
         ax.set_ylabel('y')
-        
+
     fig.suptitle("Posterior predictive (1d slices)")
     for dim in range(dim_in):
         ax_dim = ax[dim] if dim_in>1 else ax 

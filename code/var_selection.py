@@ -48,6 +48,9 @@ args = parser.parse_args()
 if not os.path.exists(args.dir_out):
     os.makedirs(os.path.join(args.dir_out, 'output/'))
 
+with open(os.path.join(args.dir_out, 'program_info.txt'), 'w') as f:
+    f.write('Call:\n%s\n\n' % ' '.join(sys.argv[:]))
+
 # allocate space
 n_obs_list = util.arrange_full(args.n_obs_min, args.n_obs_max, args.n_obs_step)
 dim_in_list = util.arrange_full(args.dim_in_min, args.dim_in_max, args.dim_in_step)
@@ -134,7 +137,7 @@ for i, n_obs in enumerate(n_obs_list):
 np.save(os.path.join(args.dir_out, 'results.npy'), res)
 
 # visualization
-# res has dimensions: obs x dim_in x rff_dim x rep x input
+# res has dimensions: obs x dim_in x rff_dim x sig2 x rep x input
 res = np.load(os.path.join(args.dir_out, 'results.npy'), allow_pickle=True).item()
 
 # average over reps

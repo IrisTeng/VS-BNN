@@ -212,7 +212,7 @@ class RffVarImportancePytorch(object):
         psi_samp = torch.zeros((n_samp, self.model.dim_in))
         for i in range(n_samp):
 
-            f = self.model(X, weights_type='sample')
+            f = self.model(X, weights_type='sample_post')
             torch.sum(f).backward()
             psi_samp[i,:] = torch.mean(X.grad**2,0)
             X.grad.zero_()
@@ -225,12 +225,16 @@ class RffVarImportancePytorch(object):
 
     def sample_f_post(self, x):
         # inputs and outputs are numpy arrays
-        return self.model(torch.from_numpy(x), weights_type='sample').detach().numpy()
+        return self.model(torch.from_numpy(x), weights_type='sample_post').detach().numpy()
 
 class RffHsVarImportance(object):
-    def __init__(self, X, Y, sig2_inv, dim_in=1, dim_out=1, dim_hidden=50, \
+    def __init__(self, 
+        X, Y, \
+        sig2_inv, \
+        dim_in=1, dim_out=1, dim_hidden=50, \
         infer_noise=False, sig2_inv_alpha_prior=None, sig2_inv_beta_prior=None, \
-        linear_term=False, linear_dim_in=None):
+        linear_term=False, linear_dim_in=None,\
+        **model_kwargs):
         super().__init__()
 
         self.X = torch.from_numpy(X)
@@ -238,7 +242,7 @@ class RffHsVarImportance(object):
 
         self.model = RffHs(dim_in=X.shape[1], dim_out=Y.shape[1], dim_hidden=dim_hidden, \
             infer_noise=infer_noise, sig2_inv=sig2_inv, sig2_inv_alpha_prior=sig2_inv_alpha_prior, sig2_inv_beta_prior=sig2_inv_beta_prior, \
-            linear_term=linear_term, linear_dim_in=linear_dim_in)
+            linear_term=linear_term, linear_dim_in=linear_dim_in, **model_kwargs)
         
     def train(self, lr=.001, n_epochs=100):
 
@@ -265,7 +269,7 @@ class RffHsVarImportance(object):
         psi_samp = torch.zeros((n_samp, self.model.dim_in))
         for i in range(n_samp):
 
-            f = self.model(X, sample_input_layer=True, weights_type='sample')
+            f = self.model(X, weights_type_layer_in='sample_post', weights_type_layer_out='sample_post')
             torch.sum(f).backward()
             psi_samp[i,:] = torch.mean(X.grad**2,0)
             X.grad.zero_()
@@ -336,7 +340,7 @@ class RffHsVarImportance(object):
 
     def sample_f_post(self, x):
         # inputs and outputs are numpy arrays
-        return self.model(torch.from_numpy(x), sample_input_layer=True, weights_type='sample').detach().numpy()
+        return self.model(torch.from_numpy(x), weights_type_layer_in='sample_post', weights_type_layer_out='sample_post').detach().numpy()
 
 
 class BKMRVarImportance(object):

@@ -244,7 +244,7 @@ class Rff(nn.Module):
         self.layer_in = layers.RffLayer(self.dim_in, self.dim_hidden)
         self.layer_out = layers.LinearLayer(self.dim_hidden, prior_sig2=10/self.dim_in, sig2_y=1/sig2_inv)
 
-    def forward(self, x, x_linear=None, weights_type='sample'):
+    def forward(self, x, x_linear=None, weights_type='sample_post'):
         h = self.layer_in(x)
         return self.layer_out(h, weights_type=weights_type)
 
@@ -274,9 +274,12 @@ class RffHs(nn.Module):
 
     Currently only single layer supported
     """
-    def __init__(self, dim_in, dim_out, dim_hidden=50, \
+    def __init__(self, 
+        dim_in, \
+        dim_out, \
+        dim_hidden=50, \
         infer_noise=False, sig2_inv=None, sig2_inv_alpha_prior=None, sig2_inv_beta_prior=None, \
-        linear_term=False, linear_dim_in=None, \
+        linear_term=False, linear_dim_in=None,
         **kwargs):
         super(RffHs, self).__init__()
         self.dim_in = dim_in
@@ -285,7 +288,6 @@ class RffHs(nn.Module):
         self.infer_noise=infer_noise
         self.linear_term=linear_term
         self.linear_dim_in=linear_dim_in
-
 
         # noise
         if self.infer_noise:
@@ -302,14 +304,14 @@ class RffHs(nn.Module):
             self.register_buffer('sig2_inv', torch.tensor(sig2_inv).clone().detach())
 
         # layers
-        self.layer_in = layers.RffHsLayer(self.dim_in, self.dim_hidden)
-        self.layer_out = layers.LinearLayer(self.dim_hidden, sig2_y=1/sig2_inv)
+        self.layer_in = layers.RffHsLayer(self.dim_in, self.dim_hidden, **kwargs)
+        self.layer_out = layers.LinearLayer(self.dim_hidden, sig2_y=1/sig2_inv, **kwargs)
 
-    def forward(self, x, x_linear=None, sample_input_layer=True, weights_type='sample'):
+    def forward(self, x, x_linear=None, weights_type_layer_in='sample_post', weights_type_layer_out='sample_post'):
 
         # network
-        h = self.layer_in(x, sample=sample_input_layer)
-        y = self.layer_out(h, weights_type=weights_type)
+        h = self.layer_in(x, weights_type=weights_type_layer_in)
+        y = self.layer_out(h, weights_type=weights_type_layer_out)
 
         # add linear term if specified
         if self.linear_term and x_linear is not None:
@@ -331,7 +333,7 @@ class RffHs(nn.Module):
 
     def loss(self, x, y, x_linear=None, temperature=1):
         '''negative elbo'''
-        y_pred = self.forward(x, x_linear, sample_input_layer=True, weights_type='stored')
+        y_pred = self.forward(x, x_linear, weights_type_layer_in='sample_post', weights_type_layer_out='stored')
 
         kl_divergence = self.kl_divergence()
         #kl_divergence = 0
@@ -344,7 +346,7 @@ class RffHs(nn.Module):
     def fixed_point_updates(self, x, y, x_linear=None, temperature=1): 
         self.layer_in.fixed_point_updates() # update horseshoe aux variables
 
-        h = self.layer_in(x, sample=True) # hidden units based on sample from variational dist
+        h = self.layer_in(x, weights_type='sample_post') # hidden units based on sample from variational dist
         self.layer_out.fixed_point_updates(h, y) # conjugate update of output weights 
 
         self.layer_out.sample_weights(store=True) # sample output weights from full conditional

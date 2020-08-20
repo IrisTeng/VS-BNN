@@ -4,6 +4,8 @@ import torch.nn.functional as F
 from torch.distributions.normal import Normal
 from torch.distributions.gamma import Gamma
 from torch.distributions.multivariate_normal import MultivariateNormal
+from torch.distributions.half_cauchy import HalfCauchy
+
 import numpy as np
 from math import pi, log, sqrt
 import numpy as np
@@ -16,7 +18,7 @@ class LinearLayer(nn.Module):
 
     Assumes 1d outputs for now
     """
-    def __init__(self, dim_in, prior_mu=0, prior_sig2=1, sig2_y=.1, **kwargs):
+    def __init__(self, dim_in, prior_mu=0., prior_sig2=1., sig2_y=.1, **kwargs):
         super(LinearLayer, self).__init__()
 
         self.dim_in = dim_in
@@ -34,13 +36,21 @@ class LinearLayer(nn.Module):
         self.mu.normal_(0,1)
         self.sig2 = self.prior_sig2*torch.eye(self.dim_in)
 
-    def sample_weights(self, store=False):
+    def sample_weights(self, store=False, prior=False):
+        if prior:
+            mu = self.prior_mu*torch.ones(1, self.dim_in)
+            sig2 = self.prior_sig2*torch.eye(self.dim_in)
+        else:
+            mu = self.mu
+            sig2 = self.sig2
+
         try:
-            m = MultivariateNormal(self.mu, self.sig2)
+            m = MultivariateNormal(mu, sig2)
             w = m.sample()
         except:
             print('Using np.random.multivariate_normal')
-            w = torch.from_numpy(np.random.multivariate_normal(self.mu.reshape(-1).numpy(), self.sig2.numpy())).float()
+            w = torch.from_numpy(np.random.multivariate_normal(mu.reshape(-1).numpy(), sig2.numpy())).float()
+        
         if store: self.w = w
         return w
     
@@ -57,17 +67,25 @@ class LinearLayer(nn.Module):
             print('Error: cannot update LinearLayer, skipping update')
             pass
         
-    def forward(self, x, weights_type='mean'):
+    def forward(self, x, weights_type='sample_post'):
         '''
         weights_type = 'mean': 
         weights_type = 'sample': 
         weights_type = 'stored': 
         '''
-        if weights_type == 'mean':
+        if weights_type == 'mean_prior':
+            w = self.prior_mu
+
+        elif weights_type == 'mean_post':
             w = self.mu
-        if weights_type == 'sample':
-            w = self.sample_weights(store=False)
-        if weights_type == 'stored':
+
+        elif weights_type == 'sample_prior':
+            w = self.sample_weights(store=False, prior=True)
+
+        elif weights_type == 'sample_post':
+            w = self.sample_weights(store=False, prior=False)
+
+        elif weights_type == 'stored':
             w = self.w
 
         return F.linear(x, w)
@@ -100,11 +118,21 @@ class RffHsLayer(nn.Module):
     """
     Random features with horseshoe
     """
-    def __init__(self, dim_in, dim_out, b_g=1, b_0=1, **kwargs):
+    def __init__(self, dim_in, dim_out, b_g=1, b_0=1, infer_nu=True, nu=None, **kwargs):
         super(RffHsLayer, self).__init__()
+        '''
+        nu is the layer scale, eta is the unit-specific scale
+
+        b_g: nu ~ C^+(b_g)
+        b_0: eta ~ C^+(b_0)
+        infer_nu: whether to infer nu
+        nu: fixed value for nu (only used if infer_nu=True)
+        '''
 
         self.b_g = b_g
         self.b_0 = b_0
+
+        self.infer_nu = infer_nu
 
         ### architecture
         self.dim_in = dim_in
@@ -117,11 +145,15 @@ class RffHsLayer(nn.Module):
         ### variational parameters
 
         # layer scales
-        self.lognu_mu = nn.Parameter(torch.empty(1))
-        self.lognu_logsig2 = nn.Parameter(torch.empty(1))
+        if self.infer_nu:
+            self.lognu_mu = nn.Parameter(torch.empty(1))
+            self.lognu_logsig2 = nn.Parameter(torch.empty(1))
 
-        self.register_buffer('vtheta_a', torch.empty(1))
-        self.register_buffer('vtheta_b', torch.empty(1))
+            self.register_buffer('vtheta_a', torch.empty(1))
+            self.register_buffer('vtheta_b', torch.empty(1))
+        
+        else:
+            self.register_buffer('nu', torch.tensor(nu))
 
         # input unit scales
         self.logeta_mu = nn.Parameter(torch.empty(self.dim_in))
@@ -133,16 +165,21 @@ class RffHsLayer(nn.Module):
         ### priors
 
         # layer scales
-        self.lognu_a_prior = torch.tensor(0.5)
+        if self.infer_nu:
+            self.lognu_a_prior = torch.tensor(0.5) # shouldn't this be called "nu_a_prior"?
 
-        self.vtheta_a_prior = torch.tensor(0.5)
-        self.vtheta_b_prior = torch.tensor(1/(b_g**2))
+            self.vtheta_a_prior = torch.tensor(0.5)
+            self.vtheta_b_prior = torch.tensor(1/(b_g**2))
+
+            self.nu_dist_prior = HalfCauchy(scale=b_g*torch.ones(1))
 
         # input unit scales
-        self.logeta_a_prior = torch.tensor(0.5)
+        self.logeta_a_prior = torch.tensor(0.5) # shouldn't this be called "eta_a_prior"?
 
         self.psi_a_prior = torch.tensor(0.5)
         self.psi_b_prior = torch.tensor(1/(b_0**2))
+
+        self.eta_dist_prior = HalfCauchy(scale=b_0*torch.ones(self.dim_in))
 
         ### init params
         self.init_parameters()
@@ -152,9 +189,10 @@ class RffHsLayer(nn.Module):
         # initialize variational parameters
 
         # layer scale
-        #self.lognu_mu.data = torch.log(np.abs(self.b_g*torch.randn(1) / torch.randn(1)))
-        self.lognu_mu.data = torch.log(1+1e-2*torch.randn(self.lognu_mu.shape))
-        self.lognu_logsig2.data.normal_(-9, 1e-2)
+        if self.infer_nu:
+            #self.lognu_mu.data = torch.log(np.abs(self.b_g*torch.randn(1) / torch.randn(1)))
+            self.lognu_mu.data = torch.log(1+1e-2*torch.randn(self.lognu_mu.shape))
+            self.lognu_logsig2.data.normal_(-9, 1e-2)
 
         # input unit scales
         #self.logeta_mu.data = torch.log(np.abs(self.b_0*torch.randn(self.logeta_mu.shape) / torch.randn(self.logeta_mu.shape)))
@@ -168,25 +206,45 @@ class RffHsLayer(nn.Module):
         self.w.normal_(0, 1)
         self.b.uniform_(0, 2*pi)
 
-    def forward(self, x, sample=True):
+    def forward(self, x, weights_type='sample_post'):
         '''
+        Note: 'mean_prior' doesn't exist (since HalfCauchy)
         '''
-        # regular reparameterization trick on scales
-        nu = util.reparam_trick_lognormal(self.lognu_mu, self.lognu_logsig2.exp(), sample)
-        eta = util.reparam_trick_lognormal(self.logeta_mu, self.logeta_logsig2.exp(), sample)
+
+        if weights_type == 'mean_post':
+            if self.infer_nu:
+                nu = util.reparam_trick_lognormal(self.lognu_mu, self.lognu_logsig2.exp(), sample=False)
+            else:
+                nu = self.nu
+            eta = util.reparam_trick_lognormal(self.logeta_mu, self.logeta_logsig2.exp(), sample=False)
+
+        elif weights_type == 'sample_prior':
+            if self.infer_nu:
+                nu = self.nu_dist_prior.sample()
+            else:
+                nu = self.nu
+            eta = self.eta_dist_prior.sample()
+
+        elif weights_type == 'sample_post':
+            # regular reparameterization trick on scales
+            if self.infer_nu:
+                nu = util.reparam_trick_lognormal(self.lognu_mu, self.lognu_logsig2.exp(), sample=True)
+            else:
+                nu = self.nu
+            eta = util.reparam_trick_lognormal(self.logeta_mu, self.logeta_logsig2.exp(), sample=True)
 
         #nu=1. # TEMP FOR TESTING
         #eta=1. # TEMP FOR TESTING
+        #return F.relu(F.linear(x, nu*eta*self.w, self.b)) # relu features TEMP FOR TESTING
 
         return sqrt(2/self.dim_out)*torch.cos(F.linear(x, nu*eta*self.w, self.b))
-
-        #return F.relu(F.linear(x, nu*eta*self.w, self.b)) # relu features for testing
 
     def fixed_point_updates(self):
 
         # layer scale
-        self.vtheta_a = torch.tensor([1.]) # torch.ones((self.dim_out,)) # could do this in init
-        self.vtheta_b = torch.exp(-self.lognu_mu + 0.5*self.lognu_logsig2.exp()) + 1/(self.b_g**2)
+        if self.infer_nu:
+            self.vtheta_a = torch.tensor([1.]) # torch.ones((self.dim_out,)) # could do this in init
+            self.vtheta_b = torch.exp(-self.lognu_mu + 0.5*self.lognu_logsig2.exp()) + 1/(self.b_g**2)
 
         # input unit scales
         self.psi_a = torch.ones((self.dim_in,)) # could do this in init
@@ -198,8 +256,9 @@ class RffHsLayer(nn.Module):
         e=0
 
         # layer scale
-        e += util.lognormal_entropy(self.lognu_logsig2.exp().sqrt().log(), self.lognu_mu, 1)
-        e += util.entropy_invgamma(self.vtheta_a, self.vtheta_b)
+        if self.infer_nu:
+            e += util.lognormal_entropy(self.lognu_logsig2.exp().sqrt().log(), self.lognu_mu, 1)
+            e += util.entropy_invgamma(self.vtheta_a, self.vtheta_b)
 
         # input unit scales
         e += util.lognormal_entropy(self.logeta_logsig2.exp().sqrt().log(), self.logeta_mu, self.dim_in)
@@ -230,8 +289,9 @@ class RffHsLayer(nn.Module):
 
         ce = 0
 
-        ce += util.cross_entropy_cond_lognormal_invgamma_new(q_mu=self.lognu_mu, q_sig2=self.lognu_logsig2.exp(), q_alpha=self.vtheta_a, q_beta=self.vtheta_b, p_alpha=self.lognu_a_prior) 
-        ce += util.cross_entropy_invgamma_new(q_alpha=self.vtheta_a, q_beta=self.vtheta_b, p_alpha=self.vtheta_a_prior, p_beta=self.vtheta_b_prior)
+        if self.infer_nu:
+            ce += util.cross_entropy_cond_lognormal_invgamma_new(q_mu=self.lognu_mu, q_sig2=self.lognu_logsig2.exp(), q_alpha=self.vtheta_a, q_beta=self.vtheta_b, p_alpha=self.lognu_a_prior) 
+            ce += util.cross_entropy_invgamma_new(q_alpha=self.vtheta_a, q_beta=self.vtheta_b, p_alpha=self.vtheta_a_prior, p_beta=self.vtheta_b_prior)
 
         ce += util.cross_entropy_cond_lognormal_invgamma_new(q_mu=self.logeta_mu, q_sig2=self.logeta_logsig2.exp(), q_alpha=self.psi_a, q_beta=self.psi_b, p_alpha=self.logeta_a_prior) 
         ce += util.cross_entropy_invgamma_new(q_alpha=self.psi_a, q_beta=self.psi_b, p_alpha=self.psi_a_prior, p_beta=self.psi_b_prior)
