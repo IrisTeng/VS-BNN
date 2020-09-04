@@ -176,7 +176,7 @@ def load_data(toy_name, n_obs, dim_in, sig2=None, seed=0):
         Z, Y, sig2 = bkmr_toy(n_obs, dim_in, sig2, seed)
         X = None
     elif toy_name == 'workshop':
-        Z, X, Y = workshop_data(n_obs, dim_in, seed)
+        Z, X, Y = workshop_data(n_obs, dim_in, seed=seed)
         sig2 = None
     else:
         print('toy not recognized')
@@ -300,8 +300,12 @@ def plot_results_dist(data, dim_in, n_obs_list, data_true=None, fig=None, ax=Non
     if data_true is not None:
         ax[0].legend([plt.Line2D([0], [0], color='red')],['"truth"'])
 
+    n_rep = data.shape[1]
     for j, n_obs in enumerate(n_obs_list):
-        sns.violinplot(data=data[j,:,:], ax=ax[j])
+        if n_rep>1:
+            sns.violinplot(data=data[j,:,:], ax=ax[j])
+        else:
+            ax[j].bar(np.arange(dim_in), data[j,0,:])
         for i in range(dim_in):
             ax[j].set_ylabel('%d obs.' % n_obs)
             if data_true is not None:

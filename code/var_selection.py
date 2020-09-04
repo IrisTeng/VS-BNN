@@ -88,14 +88,14 @@ for i, n_obs in enumerate(n_obs_list):
 
                     Z, X, Y, sig2 = util.load_data(args.dataset_name, n_obs=n_obs, dim_in=dim_in, sig2=sig2, seed=seed)
 
-                    if sig2 is None:
-                        sig2 = np.var(Y) # initial guess for sig2, could be improved?
-
                     if args.subtract_covariates:
                         if X is None:
                             print('error: no covariates to subtract')
                         else:
                             Y = util.resid_linear_model(X,Y)
+
+                    if sig2 is None:
+                        sig2 = np.var(Y) # initial guess for sig2, could be improved?
 
                     if args.model=='GP':
                         m = models.GPyVarImportance(Z, Y, sig2=sig2, \

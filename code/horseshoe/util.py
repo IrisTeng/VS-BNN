@@ -146,6 +146,16 @@ def kl_invgamma(alpha_p, beta_p, alpha_q, beta_q):
     '''
     return kl_gamma(alpha_p, beta_p, alpha_q, beta_q)
 
+def kl_diag_normal(mu_p, sig2_p, mu_q, sig2_q):
+    '''
+    KL(p,q) = E_p[Ln(p/q)] = -E_p[-Ln p] + E_p[-Ln q] = -H(p,p) + H(p, q)
+
+    p(x) = DiagNormal(mu_p, sig2_p)
+    q(x) = DiagNormal(mu_q, sig2_q)
+    '''
+    D = mu_p.shape[0]
+    return 0.5*torch.sum(sig2_p/sig2_q + (mu_p-mu_q)**2/sig2_q - D + torch.log(sig2_q) - torch.log(sig2_p))
+
 def cross_entropy_lognormal_invgamma(mu_p, sig2_p, alpha_q, beta_q):
     '''
     H(p, q) = E_p[-Ln q]
@@ -179,9 +189,8 @@ def EPw_Gaussian(mu, sig2):
     a = 0.5*wD *math.log(2*math.pi)  + 0.5*(torch.sum(mu**2)+torch.sum(sig2)) # BC: Is the sign right?
     return a
 
-
-def diag_gaussian_entropy(log_std, D):
-    return 0.5 * D * (1.0 + math.log(2*math.pi)) + torch.sum(log_std)
+def diag_gaussian_entropy(sig2):
+    return 0.5 * sig2.shape[0] * (1.0 + math.log(2*math.pi)) + 0.5*torch.sum(torch.log(sig2))
 
 def lognormal_entropy(log_std, mu, D):
     return torch.sum(log_std + mu + 0.5) + (D / 2.0) * math.log(2 * math.pi)
@@ -279,4 +288,10 @@ def isPD(B):
         return True
     except np.linalg.LinAlgError:
         return False
+
+def softplus(x):
+    return torch.log(1+torch.exp(x))
+    
+def softplus_inverse(y):
+    return torch.log(torch.exp(y)-1)
 

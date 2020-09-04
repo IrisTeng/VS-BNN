@@ -7,7 +7,7 @@ from torch.distributions.multivariate_normal import MultivariateNormal
 import numpy as np
 import math
 
-import layers
+import layers_v2 as layers
 
 def get_activation(activation_type='relu'):
     if activation_type=='relu':
@@ -280,6 +280,7 @@ class RffHs(nn.Module):
         dim_hidden=50, \
         infer_noise=False, sig2_inv=None, sig2_inv_alpha_prior=None, sig2_inv_beta_prior=None, \
         linear_term=False, linear_dim_in=None,
+        layer_in_name='RffVarSelectLogitNormalLayer',
         **kwargs):
         super(RffHs, self).__init__()
         self.dim_in = dim_in
@@ -304,7 +305,9 @@ class RffHs(nn.Module):
             self.register_buffer('sig2_inv', torch.tensor(sig2_inv).clone().detach())
 
         # layers
-        self.layer_in = layers.RffHsLayer(self.dim_in, self.dim_hidden, **kwargs)
+        #self.layer_in = layers.RffHsLayer2(self.dim_in, self.dim_hidden, **kwargs)
+        #self.layer_in = layers.RffLogitNormalLayer(self.dim_in, self.dim_hidden, **kwargs)
+        self.layer_in = layers.get_layer(layer_in_name)(self.dim_in, self.dim_hidden, **kwargs)
         self.layer_out = layers.LinearLayer(self.dim_hidden, sig2_y=1/sig2_inv, **kwargs)
 
     def forward(self, x, x_linear=None, weights_type_layer_in='sample_post', weights_type_layer_out='sample_post'):
@@ -319,6 +322,26 @@ class RffHs(nn.Module):
         else:
             return y
 
+    def sample_posterior_predictive(self, x_test, x_train, y_train):
+        '''
+        Need training data in order to get sample from non-variational full conditional distribution (output layer)
+
+        Code duplicates some of forward, not ideal
+        '''
+
+        # 1: sample from variational distribution
+        self.layer_in.sample_variational(store=True)
+
+        # 2: forward pass of training data with sample from 1
+        h = self.layer_in(x_train, weights_type='stored')
+
+        # 3: sample output weights from conjugate (depends on ouput from 2)
+        self.layer_out.fixed_point_updates(h, y_train) # conjugate update of output weights 
+        self.layer_out.sample_weights(store=True)
+
+        # 4: forward pass of test data using samples from 1 and 3
+        return self.forward(x_test, weights_type_layer_in='stored', weights_type_layer_out='stored')
+
     def kl_divergence(self):
         return self.layer_in.kl_divergence()
 
@@ -331,6 +354,16 @@ class RffHs(nn.Module):
         log_prob = -0.5 * N * math.log(2 * math.pi) + 0.5 * N * torch.log(sig2_inv) - 0.5 * torch.sum((y_observed - y_pred)**2) * sig2_inv
         return -log_prob
 
+    def log_prob2(self, y_observed, y_pred):
+        '''
+        y_observed: (n_obs, dim_out)
+        y_pred: (n_obs, n_pred, dim_out)
+
+        averages over n_pred (e.g. could represent different samples), sums over n_obs
+        '''
+        lik = Normal(y_pred, torch.sqrt(1/sig2_inv))
+        return lik.log_prob(y_observed.unsqueeze(1)).mean(1).sum(0)
+
     def loss(self, x, y, x_linear=None, temperature=1):
         '''negative elbo'''
         y_pred = self.forward(x, x_linear, weights_type_layer_in='sample_post', weights_type_layer_out='stored')
@@ -339,6 +372,18 @@ class RffHs(nn.Module):
         #kl_divergence = 0
 
         neg_log_prob = self.neg_log_prob(y, y_pred)
+        #neg_log_prob = 0
+
+        return neg_log_prob + temperature*kl_divergence
+
+    def loss2(self, x, y, x_linear=None, temperature=1, n_samp=10):
+        '''negative elbo'''
+        y_pred = self.forward(x, x_linear, weights_type_layer_in='sample_post', weights_type_layer_out='stored', n_samp=n_samp)
+
+        kl_divergence = self.kl_divergence()
+        #kl_divergence = 0
+
+        neg_log_prob = -self.log_prob2(y, y_pred)
         #neg_log_prob = 0
 
         return neg_log_prob + temperature*kl_divergence
@@ -411,6 +456,185 @@ class RffHs(nn.Module):
                         .format(epoch, n_epochs, self.kl_divergence().item(), -self.loss(x,y,temperature=0).item(), -self.loss(x,y).item()))
 
 
+class RffBeta(nn.Module):
+    """
+    RFF model beta prior on indicators
+
+    Currently only single layer supported
+    """
+    def __init__(self, 
+        dim_in, \
+        dim_out, \
+        dim_hidden=50, \
+        infer_noise=False, sig2_inv=None, sig2_inv_alpha_prior=None, sig2_inv_beta_prior=None, \
+        linear_term=False, linear_dim_in=None,
+        **kwargs):
+        super(RffBeta, self).__init__()
+        self.dim_in = dim_in
+        self.dim_out = dim_out
+        self.dim_hidden = dim_hidden
+        self.infer_noise=infer_noise
+        self.linear_term=linear_term
+        self.linear_dim_in=linear_dim_in
+
+        # noise
+        if self.infer_noise:
+            self.sig2_inv_alpha_prior=torch.tensor(sig2_inv_alpha_prior)
+            self.sig2_inv_beta_prior=torch.tensor(sig2_inv_beta_prior)
+            self.sig2_inv = None
+
+            self.register_buffer('sig2_inv_alpha', torch.empty(1, requires_grad=False))  # For now each output gets same noise
+            self.register_buffer('sig2_inv_beta', torch.empty(1, requires_grad=False)) 
+        else:
+            self.sig2_inv_alpha_prior=None
+            self.sig2_inv_beta_prior=None
+
+            self.register_buffer('sig2_inv', torch.tensor(sig2_inv).clone().detach())
+
+        # layers
+        self.layer_in = layers.RffBetaLayer(self.dim_in, self.dim_hidden, **kwargs)
+        self.layer_out = layers.LinearLayer(self.dim_hidden, sig2_y=1/sig2_inv, **kwargs)
+
+    def forward(self, x, x_linear=None, weights_type_layer_in='sample_post', weights_type_layer_out='sample_post'):
+
+        # network
+        h = self.layer_in(x, weights_type=weights_type_layer_in)
+        y = self.layer_out(h, weights_type=weights_type_layer_out)
+
+        # add linear term if specified
+        if self.linear_term and x_linear is not None:
+            return y + self.blm(x_linear, sample=sample)
+        else:
+            return y
+
+    def kl_divergence(self):
+        return self.layer_in.kl_divergence()
+
+    def compute_loss_gradients(self, x, y, x_linear=None, temperature=1.):
+
+        # sample from variational dist
+        self.layer_in.sample_variational(store=True)
+
+        # compute log likelihood
+        y_pred = self.forward(x, x_linear, weights_type_layer_in='stored', weights_type_layer_out='stored')
+        log_lik = -self.neg_log_prob(y, y_pred)
+
+        # gradients of score function
+        for p in self.layer_in.parameters(): 
+            if p.grad is not None:
+                p.grad.zero_()
+
+        log_q = self.layer_in.log_prob_variational()
+        log_q.backward()
+
+        self.layer_in.s_a_trans_grad_q = self.layer_in.s_a_trans.grad.clone()
+        self.layer_in.s_b_trans_grad_q = self.layer_in.s_b_trans.grad.clone()
+
+        # gradients of kl
+        for p in self.layer_in.parameters(): p.grad.zero_()
+
+        kl = self.kl_divergence()
+        kl.backward()
+
+        self.layer_in.s_a_trans_grad_kl = self.layer_in.s_a_trans.grad.clone()
+        self.layer_in.s_b_trans_grad_kl = self.layer_in.s_b_trans.grad.clone()
+
+        # gradients of loss=-elbo
+        with torch.no_grad():
+            self.layer_in.s_a_trans.grad = -log_lik*self.layer_in.s_a_trans_grad_q + temperature*self.layer_in.s_a_trans_grad_kl
+            self.layer_in.s_b_trans.grad = -log_lik*self.layer_in.s_b_trans_grad_q + temperature*self.layer_in.s_b_trans_grad_kl
+
+    def loss(self, x, y, x_linear=None, temperature=1):
+        '''negative elbo
+        NON DIFFERENTIABLE BECAUSE OF SCORE METHOD
+        '''
+        y_pred = self.forward(x, x_linear, weights_type_layer_in='sample_post', weights_type_layer_out='stored')
+
+        kl_divergence = self.kl_divergence()
+        #kl_divergence = 0
+
+        neg_log_prob = self.neg_log_prob(y, y_pred)
+        #neg_log_prob = 0
+
+        return neg_log_prob + temperature*kl_divergence
+
+    def neg_log_prob(self, y_observed, y_pred):
+        N = y_observed.shape[0]
+        if self.infer_noise:
+            sig2_inv = self.sig2_inv_alpha/self.sig2_inv_beta # Is this right? i.e. IG vs G
+        else:
+            sig2_inv = self.sig2_inv
+        log_prob = -0.5 * N * math.log(2 * math.pi) + 0.5 * N * torch.log(sig2_inv) - 0.5 * torch.sum((y_observed - y_pred)**2) * sig2_inv
+        return -log_prob
+
+    def fixed_point_updates(self, x, y, x_linear=None, temperature=1): 
+
+        h = self.layer_in(x, weights_type='sample_post') # hidden units based on sample from variational dist
+        self.layer_out.fixed_point_updates(h, y) # conjugate update of output weights 
+
+        self.layer_out.sample_weights(store=True) # sample output weights from full conditional
+
+        if self.linear_term:
+            if self.infer_noise:
+                self.blm.sig2_inv = self.sig2_inv_alpha/self.sig2_inv_beta # Shouldnt this be a samplle?
+            
+            self.blm.fixed_point_updates(y - self.forward(x, x_linear=None, sample=True)) # Subtract off just the bnn
+
+        if self.infer_noise and temperature > 0: 
+            
+            sample_y_bnn = self.forward(x, x_linear=None, sample=True) # Sample
+            if self.linear_term:
+                E_y_linear = F.linear(x_linear, self.blm.beta_mu)
+                SSR = torch.sum((y-sample_y_bnn-E_y_linear)**2) + torch.sum(self.blm.xx_inv * self.blm.beta_sig2).sum()
+            else:
+                SSR = torch.sum((y - sample_y_bnn)**2)
+
+            self.sig2_inv_alpha = self.sig2_inv_alpha_prior + temperature*0.5*x.shape[0] # Can be precomputed
+            self.sig2_inv_beta = self.sig2_inv_beta_prior + temperature*0.5*SSR
+
+    def init_parameters(self, seed=None):
+        if seed is not None:
+            torch.manual_seed(seed)
+
+        self.layer_in.init_parameters()
+        self.layer_out.init_parameters()
+
+        if self.infer_noise:
+            self.sig2_inv_alpha = self.sig2_inv_alpha_prior
+            self.sig2_inv_beta = self.sig2_inv_beta_prior
+
+        if self.linear_term:
+            self.blm.init_parameters()
+
+    def reinit_parameters(self, x, y, n_reinit=1):
+        seeds = torch.zeros(n_reinit).long().random_(0, 1000)
+        losses = torch.zeros(n_reinit)
+        for i in range(n_reinit):
+            self.init_parameters(seeds[i])
+            losses[i] = self.loss(x, y)
+
+        self.init_parameters(seeds[torch.argmin(losses).item()])
+
+    def precompute(self, x=None, x_linear=None):
+        # Needs to be run before training
+        if self.linear_term:
+            self.blm.precompute(x_linear)
+
+    def get_n_parameters(self):
+        n_param=0
+        for p in self.parameters():
+            n_param+=np.prod(p.shape)
+        return n_param
+
+    def print_state(self, x, y, epoch=0, n_epochs=0):
+        '''
+        prints things like training loss, test loss, etc
+        '''
+        print('Epoch[{}/{}], kl: {:.6f}, likelihood: {:.6f}, elbo: {:.6f}'\
+                        .format(epoch, n_epochs, self.kl_divergence().item(), -self.loss(x,y,temperature=0).item(), -self.loss(x,y).item()))
+
+
+
 
 def train(model, optimizer, x, y, n_epochs, x_linear=None, n_warmup = 0, n_rep_opt=10, print_freq=None, frac_start_save=1):
     loss = torch.zeros(n_epochs)
@@ -446,6 +670,48 @@ def train(model, optimizer, x, y, n_epochs, x_linear=None, n_warmup = 0, n_rep_o
             model.fixed_point_updates(x, y, x_linear=x_linear, temperature=1)
             #pass
             #model.layer_in.fixed_point_updates()
+
+        if epoch > frac_start_save*n_epochs and loss[epoch] < loss_best: 
+            print('saving...')
+            loss_best = loss[epoch]
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'loss': loss[epoch],
+            }, 'checkpoint.tar')
+
+        if print_freq is not None:
+            if (epoch + 1) % print_freq == 0:
+                model.print_state(x, y, epoch+1, n_epochs)
+
+    return loss
+
+
+def train_score(model, optimizer, x, y, n_epochs, x_linear=None, n_warmup = 0, n_rep_opt=10, print_freq=None, frac_start_save=1):
+    loss = torch.zeros(n_epochs)
+    loss_best = 1e9 # Need better way of initializing to make sure it's big enough
+    model.precompute(x, x_linear)
+
+    for epoch in range(n_epochs):
+
+        # TEMPERATURE HARDECODED, NEED TO FIX
+        #temperature_kl = 0. if epoch < n_epochs/2 else 1
+        #temperature_kl = epoch / (n_epochs/2) if epoch < n_epochs/2 else 1
+        temperature_kl = 0. # SET TO ZERO TO IGNORE KL
+
+        for i in range(n_rep_opt):
+
+            optimizer.zero_grad()
+
+            model.compute_loss_gradients(x, y, x_linear=x_linear, temperature=temperature_kl)
+
+            # backward
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 100)
+            optimizer.step()
+
+        with torch.no_grad():
+            model.fixed_point_updates(x, y, x_linear=x_linear, temperature=1)
 
         if epoch > frac_start_save*n_epochs and loss[epoch] < loss_best: 
             print('saving...')
