@@ -348,17 +348,7 @@ class RffHs(nn.Module):
     def kl_divergence(self):
         return self.layer_in.kl_divergence()
 
-    def neg_log_prob(self, y_observed, y_pred):
-        N = y_observed.shape[0]
-        if self.infer_noise:
-            sig2_inv = self.sig2_inv_alpha/self.sig2_inv_beta # Is this right? i.e. IG vs G
-        else:
-            sig2_inv = self.sig2_inv
-        log_prob = -0.5 * N * math.log(2 * math.pi) + 0.5 * N * torch.log(sig2_inv) - 0.5 * torch.sum((y_observed - y_pred)**2) * sig2_inv
-        return -log_prob
-
-    """
-    def log_prob2(self, y_observed, y_pred):
+    def log_prob(self, y_observed, y_pred):
         '''
         y_observed: (n_obs, dim_out)
         y_pred: (n_obs, n_pred, dim_out)
@@ -367,33 +357,18 @@ class RffHs(nn.Module):
         '''
         lik = Normal(y_pred, torch.sqrt(1/self.sig2_inv))
         return lik.log_prob(y_observed.unsqueeze(1)).mean(1).sum(0)
-    """
 
-    def loss(self, x, y, x_linear=None, temperature=1):
-        '''negative elbo'''
-        y_pred = self.forward(x, x_linear, weights_type_layer_in='sample_post', weights_type_layer_out='stored')
-
-        kl_divergence = self.kl_divergence()
-        #kl_divergence = 0
-
-        neg_log_prob = self.neg_log_prob(y, y_pred)
-        #neg_log_prob = 0
-
-        return neg_log_prob + temperature*kl_divergence
-
-    """
-    def loss_new(self, x, y, x_linear=None, temperature=1, n_samp=10):
+    def loss(self, x, y, x_linear=None, temperature=1, n_samp=1):
         '''negative elbo'''
         y_pred = self.forward(x, x_linear, weights_type_layer_in='sample_post', weights_type_layer_out='stored', n_samp_layer_in=n_samp)
 
         kl_divergence = self.kl_divergence()
         #kl_divergence = 0
 
-        neg_log_prob = -self.log_prob2(y, y_pred)
-        #neg_log_prob = 0
+        log_prob = self.log_prob(y, y_pred)
+        #log_prob = 0
 
-        return neg_log_prob + temperature*kl_divergence
-    """
+        return -log_prob + temperature*kl_divergence
 
     def fixed_point_updates(self, x, y, x_linear=None, temperature=1): 
         self.layer_in.fixed_point_updates() # update horseshoe aux variables

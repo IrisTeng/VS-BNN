@@ -191,15 +191,11 @@ class _RffVarSelectLayer(RffLayer):
         elif weights_type == 'stored':
             s = self.s
 
-
-        #return self.act(F.linear(x, s*self.w, self.b))
-        return sqrt(2/self.dim_out)*torch.cos(F.linear(x, s*self.w, self.b))
-
-        #if weights_type == 'mean_prior' or weights_type == 'mean_prior' or n_samp is None:
-        #    return self.act(F.linear(x, s*self.w, self.b)) # (n_obs, dim_hidden)
-        #else:
-        #    xs = x.unsqueeze(1) * s.unsqueeze(0) # (n_obs, n_samp, dim_hidden)
-        #    return self.act(F.linear(xs, self.w, self.b))
+        if weights_type == 'mean_prior' or weights_type == 'mean_prior' or n_samp is None:
+            return self.act(F.linear(x, s*self.w, self.b)) # (n_obs, dim_hidden)
+        else:
+            xs = x.unsqueeze(1) * s.unsqueeze(0) # (n_obs, n_samp, dim_hidden)
+            return self.act(F.linear(xs, self.w, self.b))
 
 class RffVarSelectHsLayer(_RffVarSelectLayer):
     '''
