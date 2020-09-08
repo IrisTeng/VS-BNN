@@ -310,10 +310,13 @@ class RffHs(nn.Module):
         self.layer_in = layers.get_layer(layer_in_name)(self.dim_in, self.dim_hidden, **kwargs)
         self.layer_out = layers.LinearLayer(self.dim_hidden, sig2_y=1/sig2_inv, **kwargs)
 
-    def forward(self, x, x_linear=None, weights_type_layer_in='sample_post', weights_type_layer_out='sample_post'):
+    def forward(self, x, x_linear=None, weights_type_layer_in='sample_post', weights_type_layer_out='sample_post', n_samp_layer_in=None):
+        '''
+        n_samp is number of samples from variational distribution (first layer)
+        '''
 
         # network
-        h = self.layer_in(x, weights_type=weights_type_layer_in)
+        h = self.layer_in(x, weights_type=weights_type_layer_in, n_samp=n_samp_layer_in)
         y = self.layer_out(h, weights_type=weights_type_layer_out)
 
         # add linear term if specified
@@ -354,6 +357,7 @@ class RffHs(nn.Module):
         log_prob = -0.5 * N * math.log(2 * math.pi) + 0.5 * N * torch.log(sig2_inv) - 0.5 * torch.sum((y_observed - y_pred)**2) * sig2_inv
         return -log_prob
 
+    """
     def log_prob2(self, y_observed, y_pred):
         '''
         y_observed: (n_obs, dim_out)
@@ -361,8 +365,9 @@ class RffHs(nn.Module):
 
         averages over n_pred (e.g. could represent different samples), sums over n_obs
         '''
-        lik = Normal(y_pred, torch.sqrt(1/sig2_inv))
+        lik = Normal(y_pred, torch.sqrt(1/self.sig2_inv))
         return lik.log_prob(y_observed.unsqueeze(1)).mean(1).sum(0)
+    """
 
     def loss(self, x, y, x_linear=None, temperature=1):
         '''negative elbo'''
@@ -376,9 +381,10 @@ class RffHs(nn.Module):
 
         return neg_log_prob + temperature*kl_divergence
 
-    def loss2(self, x, y, x_linear=None, temperature=1, n_samp=10):
+    """
+    def loss_new(self, x, y, x_linear=None, temperature=1, n_samp=10):
         '''negative elbo'''
-        y_pred = self.forward(x, x_linear, weights_type_layer_in='sample_post', weights_type_layer_out='stored', n_samp=n_samp)
+        y_pred = self.forward(x, x_linear, weights_type_layer_in='sample_post', weights_type_layer_out='stored', n_samp_layer_in=n_samp)
 
         kl_divergence = self.kl_divergence()
         #kl_divergence = 0
@@ -387,6 +393,7 @@ class RffHs(nn.Module):
         #neg_log_prob = 0
 
         return neg_log_prob + temperature*kl_divergence
+    """
 
     def fixed_point_updates(self, x, y, x_linear=None, temperature=1): 
         self.layer_in.fixed_point_updates() # update horseshoe aux variables
