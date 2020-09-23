@@ -37,6 +37,11 @@ parser.add_argument('--rff_dim_step', type=int, default=100)
 parser.add_argument('--batch_size', type=int, default=16)
 parser.add_argument('--epochs', type=int, default=16)
 
+# RffVarSelect options
+parser.add_argument('--layer_in_name', type=str, default='RffVarSelectLogitNormalLayer')
+parser.add_argument('--s_loc_prior', type=float, default=0.0)
+parser.add_argument('--s_scale_prior', type=float, default=1.0)
+
 # observational noise variance (sig2) options
 parser.add_argument('--sig2_min', type=float, default=.01)
 parser.add_argument('--sig2_max', type=float, default=.01)
@@ -114,7 +119,10 @@ for i, n_obs in enumerate(n_obs_list):
                         m.train()
 
                     elif args.model=='RFFHS':
-                        m = models.RffHsVarImportance(Z, Y, dim_hidden=rff_dim, sig2_inv=1/sig2)
+                        m = models.RffHsVarImportance(Z, Y, dim_hidden=rff_dim, sig2_inv=1/sig2,
+                            layer_in_name=args.layer_in_name, 
+                            s_loc_prior=args.s_loc_prior,
+                            s_scale_prior=args.s_scale_prior)
                         m.train(n_epochs=args.epochs)
 
                     elif args.model=='BKMR':
@@ -130,6 +138,24 @@ for i, n_obs in enumerate(n_obs_list):
                         fig, ax = util.plot_slices(m.sample_f_post, Z, Y, quantile=.5, n_samp=500, figsize=(4*dim_in,4))
                         fig.savefig(os.path.join(args.dir_out, 
                                     'slices-n_obs=%d-dim_in=%d-rff_dim=%d-sig2%.2f-rep=%d.png' % (n_obs_list[i],dim_in_list[j],rff_dim_list[l],sig2_list[s],k)))
+                        plt.close('all')
+
+                    ## posterior of s (PLOT CODE SHOULD BE IMPROVED)
+                    if args.model=='RFFHS' and args.layer_in_name=='RffVarSelectLogitNormalLayer':
+                        eps = .0001
+                        x = np.linspace(0+eps,1-eps,100)
+                        logit = lambda x: np.log(x/(1-x))
+                        def logitnormal_pdf(x, mu=0, sig2=1):
+                            return 1/np.sqrt(2*np.pi*sig2)/(x*(1-x))*np.exp(-(logit(x)-mu)**2/(2*sig2))
+
+                        fig, ax = plt.subplots()
+                        for d in range(m.model.dim_in):
+                            loc = m.model.layer_in.s_loc[d].detach().numpy()
+                            scale = m.model.layer_in.transform(m.model.layer_in.s_scale_untrans[d]).detach().numpy()
+                            ax.plot(x, logitnormal_pdf(x,loc,scale**2),label='s%d'%d)
+                        fig.legend()
+                        fig.savefig(os.path.join(args.dir_out, 
+                                    'sposterior-n_obs=%d-dim_in=%d-rff_dim=%d-sig2%.2f-rep=%d.png' % (n_obs_list[i],dim_in_list[j],rff_dim_list[l],sig2_list[s],k)))
                         plt.close('all')
                         
 
@@ -178,7 +204,6 @@ fig.savefig(os.path.join(args.dir_out, 'estimated_psi_sig2_vs_n_obs.png'))
 idx_rff_dim = 0 # slice of rff_dim to plot
 idx_sig2 = 0 # slice of sig2 to plot
 for idx_dim_in, dim_in in enumerate(res['dim_in_list']):
-
     fig, ax = util.plot_results_dist(res['psi_mean'][:,idx_dim_in,idx_rff_dim,idx_sig2,:,:], dim_in, res['n_obs_list'], data_true=None)
     ax[0].set_title('distribution of variable importance $\psi$ \n(rbf_opt input, %d variables)' % dim_in)
     fig.savefig(os.path.join(args.dir_out, 'psi_dist_dim_in=%d.png' % dim_in))

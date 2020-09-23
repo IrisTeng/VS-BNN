@@ -243,6 +243,7 @@ class RffHsVarImportance(object):
         self.model = RffHs(dim_in=X.shape[1], dim_out=Y.shape[1], dim_hidden=dim_hidden, \
             infer_noise=infer_noise, sig2_inv=sig2_inv, sig2_inv_alpha_prior=sig2_inv_alpha_prior, sig2_inv_beta_prior=sig2_inv_beta_prior, \
             linear_term=linear_term, linear_dim_in=linear_dim_in, **model_kwargs)
+
         
     def train(self, lr=.001, n_epochs=100):
 
@@ -269,7 +270,9 @@ class RffHsVarImportance(object):
         psi_samp = torch.zeros((n_samp, self.model.dim_in))
         for i in range(n_samp):
 
-            f = self.model(X, weights_type_layer_in='sample_post', weights_type_layer_out='sample_post')
+            #f = self.model(X, weights_type_layer_in='sample_post', weights_type_layer_out='sample_post')
+            f = self.model.sample_posterior_predictive(x_test=X, x_train=self.X, y_train=self.Y)
+            
             torch.sum(f).backward()
             psi_samp[i,:] = torch.mean(X.grad**2,0)
             X.grad.zero_()
@@ -338,9 +341,15 @@ class RffHsVarImportance(object):
 
         return eta_mu.numpy(), eta_sig2.numpy()
 
-    def sample_f_post(self, x):
+    #def sample_f_post(self, x):
+    #    # inputs and outputs are numpy arrays
+    #    return self.model(torch.from_numpy(x), weights_type_layer_in='sample_post', weights_type_layer_out='sample_post').detach().numpy()
+
+    def sample_f_post(self, x_test):
         # inputs and outputs are numpy arrays
-        return self.model(torch.from_numpy(x), weights_type_layer_in='sample_post', weights_type_layer_out='sample_post').detach().numpy()
+        with torch.no_grad():
+            return self.model.sample_posterior_predictive(x_test=torch.from_numpy(x_test), x_train=self.X, y_train=self.Y).numpy().reshape(-1)
+
 
 
 class BKMRVarImportance(object):

@@ -305,7 +305,7 @@ def plot_results_dist(data, dim_in, n_obs_list, data_true=None, fig=None, ax=Non
         if n_rep>1:
             sns.violinplot(data=data[j,:,:], ax=ax[j])
         else:
-            ax[j].bar(np.arange(dim_in), data[j,0,:])
+            ax[j].bar(np.arange(dim_in), data[j,0,:dim_in])
         for i in range(dim_in):
             ax[j].set_ylabel('%d obs.' % n_obs)
             if data_true is not None:
