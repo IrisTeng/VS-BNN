@@ -129,18 +129,24 @@ def workshop_data(n_obs_samp=None, dim_in_samp=None, dir_in='../data/workshop', 
     X=pd.read_csv(os.path.join(dir_in, 'X.csv'), header=0).to_numpy() # covariates
     Y=pd.read_csv(os.path.join(dir_in, 'y.csv'), header=0).to_numpy() # lnLTL_z
 
+    n_obs_max, dim_in_max = Z.shape
+
     # randomly sample observations
-    if n_obs_samp is not None:
+    if n_obs_samp is not None and n_obs_samp < n_obs_max:
         r = np.random.RandomState(seed) 
         obs_keep = r.choice(Z.shape[0], n_obs_samp, replace=False)
         Z = Z[obs_keep,:]
         X = X[obs_keep,:]
         Y = Y[obs_keep]
+    elif n_obs_samp > n_obs_max:
+        print('Warning: n_obs_samp=%d exceeds maximum of %d' % (n_obs_samp, n_obs_max))
 
     # randomly sample mixture components
-    if dim_in_samp is not None:
+    if dim_in_samp is not None and dim_in_samp < dim_in_max:
         r = np.random.RandomState(seed+1) 
         Z = Z[:,r.choice(Z.shape[1], dim_in_samp, replace=False)]
+    elif dim_in_samp > dim_in_max:
+        print('Warning: dim_in_samp=%d exceeds maximum of %d' % (dim_in_samp, dim_in_max))
 
     return Z, X, Y.reshape(-1,1)
     
