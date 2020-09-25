@@ -1,0 +1,148 @@
+\documentclass[11pt, oneside]{article}   	% use "amsart" instead of "article" for AMSLaTeX format
+\usepackage[margin=1in]{geometry}                		% See geometry.pdf to learn the layout options. There are lots.
+\geometry{letterpaper}                   		% ... or a4paper or a5paper or ... 
+%\geometry{landscape}                		% Activate for rotated page geometry
+%\usepackage[parfill]{parskip}    		% Activate to begin paragraphs with an empty line rather than an indent
+\usepackage{graphicx}				% Use pdf, png, jpg, or eps§ with pdflatex; use eps in DVI mode
+								% TeX will automatically convert eps --> pdf in pdflatex		
+\usepackage{amssymb}
+\usepackage{mathtools}
+\usepackage{amsthm}
+\usepackage[usenames, dvipsnames]{color}
+\usepackage{bm}
+\usepackage{url}
+\usepackage[linesnumbered,ruled,vlined]{algorithm2e}
+
+\usepackage[onehalfspacing]{setspace}
+\usepackage{natbib}
+\usepackage{hyperref}
+
+\usepackage{cancel}
+\usepackage{float}
+\usepackage{xcolor}
+
+%\usepackage[demo]{graphicx}
+\usepackage{subfig}
+
+\def \bbeta {\bm{\beta}} 
+\def \x {\mathbf{x}} 
+\def \w {\mathbf{w}} 
+\def \b {\mathbf{b}} 
+\newcommand{\given}{\,|\,}
+
+
+% Front matter
+\title{LogitNormal model}
+\author{Beau Coker}
+\date{}							% Activate to display a given date or no date
+
+\begin{document}
+\maketitle
+
+
+\section{Model}
+
+Network:
+\begin{align}
+f(\x_n; \{s_d\}, \{\beta_k\}, \{\w_k\}, b ) &=\sum_{k=1}^K \beta_k \Phi(\x_n; s_d, \w_k, b ) \\
+\Phi(\x_n; s_d, \w_k, b) &= \sqrt{2}\cos\left(  \sum_{d=1}^D s_d w_{k,d} x_{n,d} \right)
+\end{align}
+In matrix notation:
+\begin{align}
+f(X; S, \bbeta) &= \Phi(X; S, W, b)\bbeta \\
+\Phi(X; S, W, b) &= \sqrt{2}\cos(X S W + \b) \\
+\end{align}
+where $S=\text{diag}(s_1,\dotsc,s_D)$ and $W=[\w_1^T,\dotsc,\w_K^T]^T$.
+
+Model:
+\begin{align}
+\beta_k &\sim \mathcal{N}(0, \sigma^2_\beta), \quad k=1,\dotsc,K \\
+s_d &\sim \text{LogitNormal}(\mu_s, \sigma^2_s) \\
+y_n \given \x_n, \{\beta_k\}, \{s_d\}, \{\w_k\}, b &\sim \mathcal{N}(f(\x_n; \{s_d\}, \{\beta_k\}), \sigma^2), \quad n=1,\dotsc,N \\
+\end{align}
+
+\section{Inference}
+
+
+
+\begin{algorithm}[H]
+	\KwIn
+	{%
+		Neural network with random weights $f(x; \beta, s)$,
+		training data $(x,y)$
+	}
+	\KwResult{Variational parameters $\phi$ for $q_\phi(s)$}
+	Initialize $\phi$\; 
+	\For{$i=1:n_{\text{iter}}$}{ 
+		\tcc{Sample output weights $\beta_i$}
+		Sample $s$ from variational distribution $q_\phi(s)$ \;
+		Sample $\beta_i$ from full conditional: $p(\beta\mid x, y, s)$\;
+		
+		\tcc{Update variational parameters $\phi$}
+	\For{$j=1:n_\text{grad}$}{
+		Compute KL divergence $\text{KL}(\phi):=\text{KL}(q_\phi(s), p(s))$ \;
+		\For{$k=1:n_{\text{est}}$}{
+		Sample indicators $s_k = \text{logistic}(\phi_\mu + \phi_\sigma\epsilon)$, where $\epsilon\sim \mathcal{N}(0,I)$ \;
+		Compute function output $f_k(x) = f(x; \beta_i, s_k)$ \;
+		}
+		Estimate likelihood term $\text{L}(\phi):=\mathbb{E}_{\phi\sim q}[p(y\mid x, \beta, \phi)] \approx \frac{1}{n_{\text{est}}} \sum_{k} \mathcal{N}(y; f_k(x), \sigma^2 I)$ \;
+		Compute loss $\text{ELBO}(\phi) = \text{L}(\phi) - \text{KL}(\phi) $ \;
+		Update variational parameters: $\phi \gets \phi + \alpha \nabla_\phi \text{ELBO}(\phi)$ \;
+	}
+}
+	\caption{Training time}
+\end{algorithm}
+
+\vspace{2cm}
+
+\begin{algorithm}[H]
+	\KwIn
+	{%
+		Neural network with random weights $f(x; \beta, s)$,
+		variational parameters $\phi$, 
+		training data $(x,y)$, 
+		test input $x^*$
+	}
+	\KwResult{One sample $f^*$ from posterior predictive at test input $x^*$}
+
+	Sample $s$ from variational distribution $q_\phi(s)$ \;
+	Sample $\beta$ from full conditional: $p(\beta\mid x, y, s)$\;
+	Evaluate network $f^* = f(x^*; \beta, s)$
+
+	\caption{Test time (i.e. sampling from posterior predictive)}
+\end{algorithm}
+
+\vspace{2cm}
+
+
+\begin{algorithm}[H]
+	\KwIn
+	{%
+		Neural network with random weights $f(x; \beta, s)$,
+		training data $(x,y)$
+	}
+	\KwResult{Variational parameters $\phi$ for $q_\phi(s)$}
+	Initialize $\phi$\; 
+	\For{$i=1:n_{\text{iter}}$}{ 	
+		\tcc{Update variational parameters $\phi$}
+			Compute KL divergence $\text{KL}(\phi):=\text{KL}(q_\phi(s), p(s))$ \;
+			\For{$k=1:n_{\text{est}}$}{
+				Sample indicators $s_k = \text{logistic}(\phi_\mu + \phi_\sigma\epsilon)$, where $\epsilon\sim \mathcal{N}(0,I)$ \;
+				\textcolor{red}{Sample $\beta_k$ from full conditional: $p(\beta\mid x, y, s_k)$} \;
+				Compute function output $f_k(x) = f(x; \textcolor{red}{\beta_k}, s_k)$ \;
+			}
+			Estimate likelihood term $\text{L}(\phi):=\mathbb{E}_{\phi\sim q}[p(y\mid x, \beta, \phi)] \approx \frac{1}{n_{\text{est}}} \sum_{k} \mathcal{N}(y; f_k(x), \sigma^2 I)$ \;
+			Compute loss $\text{ELBO}(\phi) = \text{L}(\phi) - \text{KL}(\phi) $ \;
+			Update variational parameters: $\phi \gets \phi + \alpha \nabla_\phi \text{ELBO}(\phi)$ \;
+	}
+	\caption{Training time Version 2.0}
+\end{algorithm}
+
+
+\end{document}  
+
+
+
+
+
+
