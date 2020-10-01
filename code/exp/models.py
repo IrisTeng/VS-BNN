@@ -366,21 +366,29 @@ class BKMRVarImportance(object):
         Yvec = robjects.FloatVector(Y.reshape(-1))
         self.Y = robjects.r.matrix(Yvec, nrow=Y.shape[0], ncol=Y.shape[1], byrow=True)
         
-    def train(self, n_samp=5000):
-
+    def train(self, n_samp=1000):
+        self.n_samp = n_samp
         self.base.set_seed(robjects.FloatVector([1]))
         self.fitkm = self.bkmr.kmbayes(y = self.Y, Z = self.Z, iter = robjects.IntVector([n_samp]), verbose = robjects.vectors.BoolVector([False]), varsel = robjects.vectors.BoolVector([True]))
 
     def estimate_psi(self, X=None, n_samp=None):
         '''
-        estimates mean and variance of variable importance psi
-        X:  inputs to evaluate gradient
-        n_samp:  number of MC samples
+        RETURNS POSTERIOR INCLUSION PROBABILITIES (PIPs) NOT VARIABLE IMPORTANCES
         '''
-
         out = self.bkmr.ExtractPIPs(self.fitkm)
         
         pip = np.ascontiguousarray(out.rx2('PIP'))
         pip_var = np.zeros_like(pip)
         print('pip:', pip)
         return pip, pip_var
+
+    def sample_f_post(self, x_test):
+        # inputs and outputs are numpy arrays
+        sel = np.random.choice(range(int(self.n_samp/2), self.n_samp)) # randomly samples from second half of samples
+        Znewvec = robjects.FloatVector(x_test.reshape(-1))
+        Znew = robjects.r.matrix(Znewvec, nrow=x_test.shape[0], ncol=x_test.shape[1], byrow=True)
+
+        return np.ascontiguousarray(self.base.t(self.bkmr.SamplePred(self.fitkm, Znew = Znew, Xnew = self.base.cbind(0), sel=14))) # (n, 1)
+
+        
+

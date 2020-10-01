@@ -24,6 +24,8 @@ parser.add_argument('--n_rep', type=int, default=2)
 
 parser.add_argument('--model', type=str, default='GP', help='select "GP" or "RFF"')
 
+parser.add_argument('--compute_risk', action='store_true', help='compute bias, variance, risk')
+
 # GP options
 parser.add_argument('--opt_likelihood_variance', action='store_true')
 parser.add_argument('--opt_kernel_hyperparam', action='store_true')
@@ -41,6 +43,9 @@ parser.add_argument('--epochs', type=int, default=16)
 parser.add_argument('--layer_in_name', type=str, default='RffVarSelectLogitNormalLayer')
 parser.add_argument('--s_loc_prior', type=float, default=0.0)
 parser.add_argument('--s_scale_prior', type=float, default=1.0)
+
+# BKMR options
+parser.add_argument('--bkmr_n_samp', type=int, default=1000)
 
 # observational noise variance (sig2) options
 parser.add_argument('--sig2_min', type=float, default=.01)
@@ -76,7 +81,9 @@ res = {
     'n_obs_list': n_obs_list,
     'dim_in_list': dim_in_list,
     'rff_dim_list': dim_in_list,
-    'sig2_list': sig2_list
+    'sig2_list': sig2_list,
+    'mse': np.full(res_shape[:-1], np.nan),
+    'mse_test': np.full(res_shape[:-1], np.nan)
     }
 
 seed = 0
@@ -91,7 +98,7 @@ for i, n_obs in enumerate(n_obs_list):
                 for k in range(args.n_rep):
                     seed += 1
 
-                    Z, X, Y, sig2 = util.load_data(args.dataset_name, n_obs=n_obs, dim_in=dim_in, sig2=sig2, seed=seed)
+                    Z, X, Y, Z_test, X_test, Y_test, sig2 = util.load_data(args.dataset_name, n_obs=n_obs, dim_in=dim_in, sig2=sig2, seed=seed)
 
                     if args.subtract_covariates:
                         if X is None:
@@ -127,7 +134,7 @@ for i, n_obs in enumerate(n_obs_list):
 
                     elif args.model=='BKMR':
                         m = models.BKMRVarImportance(Z, Y, sig2)
-                        m.train()
+                        m.train(n_samp=args.bkmr_n_samp)
 
                     psi_est = m.estimate_psi(Z)
                     res['psi_mean'][i,j,l,s,k,:dim_in] = psi_est[0]
@@ -135,7 +142,10 @@ for i, n_obs in enumerate(n_obs_list):
 
                     ## slices
                     if hasattr(m, 'sample_f_post'):
-                        fig, ax = util.plot_slices(m.sample_f_post, Z, Y, quantile=.5, n_samp=500, figsize=(4*dim_in,4))
+                        #fig, ax = util.plot_slices(m.sample_f_post, Z, Y, quantile=.5, n_samp=500, figsize=(4*dim_in,4))
+                        fig, ax = util.plot_slices(m.sample_f_post, Z, Y, quantile=.5, n_samp=100, figsize=(4*dim_in,4))
+                        
+
                         fig.savefig(os.path.join(args.dir_out, 
                                     'slices-n_obs=%d-dim_in=%d-rff_dim=%d-sig2%.2f-rep=%d.png' % (n_obs_list[i],dim_in_list[j],rff_dim_list[l],sig2_list[s],k)))
                         plt.close('all')
@@ -157,6 +167,23 @@ for i, n_obs in enumerate(n_obs_list):
                         fig.savefig(os.path.join(args.dir_out, 
                                     'sposterior-n_obs=%d-dim_in=%d-rff_dim=%d-sig2%.2f-rep=%d.png' % (n_obs_list[i],dim_in_list[j],rff_dim_list[l],sig2_list[s],k)))
                         plt.close('all')
+
+                    if args.compute_risk:
+                        # could clean up code
+                        n_samp_risk = 10
+                        y_hat = np.zeros((n_samp_risk, Z.shape[0]))
+                        y_hat_test = np.zeros((n_samp_risk, Z_test.shape[0]))
+                        for ii in range(n_samp_risk):
+                            y_hat[ii,:] = model.sample_f_post(Z)
+                            y_hat_test[ii,:] = model.sample_f_post(Z_test)
+
+                        # posterior predictive mean
+                        y_hat = np.mean(y_hat, 0).reshape(-1,1)
+                        y_hat_test = np.mean(y_hat_test, 0).reshape(-1,1)
+
+                        # risk 
+                        res['mse'][i,j,l,s,k] = np.mean((Y - y_hat)**2)
+                        res['mse_test'][i,j,l,s,k] = np.mean((Y_test - y_hat_test)**2)
                         
 
 

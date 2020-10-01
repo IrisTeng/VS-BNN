@@ -89,7 +89,35 @@ def sparse_linear_toy(n_obs=200, dim_in=5, sig2=.1**2, n_nonzero=2, seed_x=0, se
 
     return X, Y.reshape(-1,1), sig2
 
+def sample_unif_sphere(n_obs, dim_in, seed=0):
+    # for sampling covarites uniformly over sphere
+    r = np.random.RandomState(seed) 
+    x = r.normal(0, 1, size=(n_obs,dim_in))
+    return np.sqrt(dim_in) * x / np.sqrt(np.sum(x**2,1).reshape(-1,1))
 
+def linear_over_sphere(n_obs, dim_in, n_beta_nonzero = 'all', sig2=0, seed_beta=0, seed_x=0, seed_sig2=0):
+    '''
+    n_beta_nonzero: set to 'all' or number of coefficients to be set to zero
+    '''
+    r_beta = np.random.RandomState(seed_beta) 
+    r_sig2 = np.random.RandomState(seed_sig2)
+    r_sig2_test = np.random.RandomState(seed_sig2+1) 
+
+    # coefficients
+    beta = r_beta.normal(size=(dim_in,1)) # true covariates
+    beta = beta / np.sqrt(beta.T @ beta)
+    if n_beta_nonzero != 'all':
+        beta[n_beta_nonzero:] = 0.0
+
+    # covariates
+    X = sample_unif_sphere(n_obs, dim_in, seed_x)
+    X_test = sample_unif_sphere(n_obs, dim_in, seed_x+1)
+
+    # outcomes
+    Y = X @ beta + r_sig2.normal(0, np.sqrt(sig2), (n_obs,1))
+    Y_test = X_test @ beta + r_sig2_test.normal(0, np.sqrt(sig2), (n_obs,1))
+
+    return X, Y.reshape(-1,1), X_test.reshape(-1,1), Y_test, sig2 
 
 def bkmr_toy(n_obs, dim_in, sig2=.5, seed=0):
     '''
@@ -106,8 +134,8 @@ def bkmr_toy(n_obs, dim_in, sig2=.5, seed=0):
     sigsq_true = robjects.FloatVector([sig2])
 
     base.set_seed(robjects.FloatVector([seed]))
-    #out = bkmr.SimData(n=n, M=M, beta_true=0, sigsq_true = sigsq_true, Zgen="realistic")
-    out = bkmr.SimData(n=n, M=M, beta_true=0, sigsq_true = sigsq_true)
+    out = bkmr.SimData(n=n, M=M, beta_true=0, sigsq_true = sigsq_true, Zgen="realistic")
+    #out = bkmr.SimData(n=n, M=M, beta_true=0, sigsq_true = sigsq_true)
 
     Z = np.ascontiguousarray(out.rx2['Z'])
     Y = np.ascontiguousarray(out.rx2['y'])
@@ -169,25 +197,35 @@ def load_data(toy_name, n_obs, dim_in, sig2=None, seed=0):
         Y: outcome
         sig2: observation variance
     '''
+
+    # defaults
+    X = None
+    X_test = None
+    Z_test = None
+    Y_test = None
+
     if toy_name == 'sin':
         Z, Y, sig2 = sin_toy(n_obs, dim_in, sig2, seed)
-        X = None
+
     elif toy_name == 'rbf':
         Z, Y, sig2 = rbf_toy(n_obs, dim_in, sig2, seed_zy=seed)
-        X = None
+
     elif toy_name == 'sparse_linear':
         Z, Y, sig2 = sparse_linear_toy(n_obs, dim_in, sig2, seed_x=seed)
-        X = None
+
+    elif toy_name == 'sparse_linear':
+        Z, Y, Z_test, Y_test, sig2 = linear_over_sphere(n_obs, dim_in, n_beta_nonzero = 'all', sig2=0, seed_beta=0, seed_x=seed, seed_sig2=seed+100)
+
     elif toy_name == 'bkmr':
         Z, Y, sig2 = bkmr_toy(n_obs, dim_in, sig2, seed)
-        X = None
+
     elif toy_name == 'workshop':
         Z, X, Y = workshop_data(n_obs, dim_in, seed=seed)
         sig2 = None
     else:
         print('toy not recognized')
 
-    return Z, X, Y, sig2
+    return Z, X, Y, Z_test, X_test, Y_test, sig2
 
 ## posterior metrics
 
@@ -383,8 +421,9 @@ def resid_linear_model(X, Y):
     '''
     Regress X on Y and return residual
     '''
-    beta_hat = np.linalg.pinv(X.T @ X) @ X.T @ Y
-    return Y - X @ beta_hat
+    X1 = np.hstack((np.ones((X.shape[0],1)),X))
+    beta_hat = np.linalg.pinv(X1.T @ X1) @ X1.T @ Y
+    return Y - X1 @ beta_hat
 
 
 

@@ -358,7 +358,7 @@ class RffHs(nn.Module):
         lik = Normal(y_pred, torch.sqrt(1/self.sig2_inv))
         return lik.log_prob(y_observed.unsqueeze(1)).mean(1).sum(0)
 
-    def loss(self, x, y, x_linear=None, temperature=1, n_samp=1):
+    def loss_original(self, x, y, x_linear=None, temperature=1, n_samp=1):
         '''negative elbo'''
         y_pred = self.forward(x, x_linear, weights_type_layer_in='sample_post', weights_type_layer_out='stored', n_samp_layer_in=n_samp)
 
@@ -367,8 +367,35 @@ class RffHs(nn.Module):
 
         log_prob = self.log_prob(y, y_pred)
         #log_prob = 0
-
+        breakpoint()
         return -log_prob + temperature*kl_divergence
+
+    def loss(self, x, y, x_linear=None, temperature=1, n_samp=1):
+        '''
+        Uses sample of weights from full conditional *based on samples of s* to compute likelihood
+        '''
+
+        kl_divergence = self.kl_divergence()
+        #breakpoint()
+
+        # 1: sample from variational distribution
+        self.layer_in.sample_variational(store=True)
+
+        # 2: forward pass of training data with sample from 1
+        h = self.layer_in(x, weights_type='stored')
+
+        # 3: sample output weights from conjugate (depends on ouput from 2)
+        self.layer_out.fixed_point_updates(h, y) # conjugate update of output weights 
+        self.layer_out.sample_weights(store=True)
+
+        # 4: forward pass of test data using samples from 1 and 3
+        y_pred = self.forward(x, weights_type_layer_in='stored', weights_type_layer_out='stored', n_samp_layer_in=1)
+
+        log_prob = self.log_prob(y, y_pred)
+
+        #breakpoint()
+        return -log_prob + temperature*kl_divergence
+
 
     def fixed_point_updates(self, x, y, x_linear=None, temperature=1): 
         self.layer_in.fixed_point_updates() # update horseshoe aux variables
