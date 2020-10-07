@@ -379,6 +379,7 @@ def plot_slice(f_sampler, x, y, quantile=.5, dim=0, n_samp=500, ax=None):
     x_plot = np.linspace(midx - .75*dx, midx + .75*dx, 100)
 
     x_plot_all = np.quantile(x, q=quantile, axis=0)*np.ones((x_plot.shape[0], x.shape[1]))
+    #x_plot_all = np.zeros((x_plot.shape[0], x.shape[1]))
     x_plot_all[:, dim] = x_plot
 
     # sample from model

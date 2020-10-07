@@ -245,14 +245,14 @@ class RffHsVarImportance(object):
             linear_term=linear_term, linear_dim_in=linear_dim_in, **model_kwargs)
 
         
-    def train(self, lr=.001, n_epochs=100):
-
+    def train(self, lr=.001, n_epochs=100, path_checkpoint='./'):
+        # returns loss
         optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
         self.model.reinit_parameters(self.X, self.Y, n_reinit=10) 
-        elbo = -train_rffhs(self.model, optimizer, self.X, self.Y, n_epochs=n_epochs, n_rep_opt=25, print_freq=1)
+        return train_rffhs(self.model, optimizer, self.X, self.Y, n_epochs=n_epochs, n_rep_opt=10, print_freq=1, frac_start_save=.5, frac_lookback=.2, path_checkpoint=path_checkpoint)
 
 
-    def estimate_psi(self, X=None, n_samp=1000):
+    def estimate_psi(self, X=None, n_samp=200):
         '''
         Use automatic gradients
 
@@ -353,7 +353,7 @@ class RffHsVarImportance(object):
 
 
 class BKMRVarImportance(object):
-    def __init__(self, Z, Y, sig2):
+    def __init__(self, Z, Y2, sig2):
         super().__init__()
 
         self.bkmr = importr('bkmr') 
@@ -363,13 +363,37 @@ class BKMRVarImportance(object):
         Zvec = robjects.FloatVector(Z.reshape(-1))
         self.Z = robjects.r.matrix(Zvec, nrow=Z.shape[0], ncol=Z.shape[1], byrow=True)
 
-        Yvec = robjects.FloatVector(Y.reshape(-1))
-        self.Y = robjects.r.matrix(Yvec, nrow=Y.shape[0], ncol=Y.shape[1], byrow=True)
+        Yvec = robjects.FloatVector(Y2.reshape(-1))
+        self.Y2 = robjects.r.matrix(Yvec, nrow=Y2.shape[0], ncol=Y2.shape[1], byrow=True)
+
+        self.have_stored_samples = False
         
     def train(self, n_samp=1000):
+
         self.n_samp = n_samp
         self.base.set_seed(robjects.FloatVector([1]))
-        self.fitkm = self.bkmr.kmbayes(y = self.Y, Z = self.Z, iter = robjects.IntVector([n_samp]), verbose = robjects.vectors.BoolVector([False]), varsel = robjects.vectors.BoolVector([True]))
+        
+        
+        ### debugging
+        print('id(Y3): ', id(Y3))
+        robjects.Y3 = Y3
+        print('id(robjects.Y3): ', id(robjects.Y3))
+        
+        import rpy2.robjects.vectors
+        import rpy2.robjects.functions
+        import rpy2.rinterface_lib.conversion
+        import rpy2.rinterface_lib.callbacks
+        import rpy2.rinterface
+        rpy2.robjects.vectors.Y3 = Y3
+        rpy2.robjects.functions.Y3 = Y3
+        rpy2.rinterface_lib.conversion.Y3 = Y3
+        rpy2.rinterface_lib.callbacks.Y3 = Y3
+        rpy2.rinterface.Y3 = Y3
+
+        breakpoint()
+        ###
+
+        self.fitkm = self.bkmr.kmbayes(y = self.Y2, Z = self.Z, iter = robjects.IntVector([n_samp]), verbose = robjects.vectors.BoolVector([False]), varsel = robjects.vectors.BoolVector([True]))
 
     def estimate_psi(self, X=None, n_samp=None):
         '''
@@ -382,13 +406,45 @@ class BKMRVarImportance(object):
         print('pip:', pip)
         return pip, pip_var
 
-    def sample_f_post(self, x_test):
+
+    """
+    def sample_f_post(self, x_test, use_saved_x_test=True):
         # inputs and outputs are numpy arrays
         sel = np.random.choice(range(int(self.n_samp/2), self.n_samp)) # randomly samples from second half of samples
-        Znewvec = robjects.FloatVector(x_test.reshape(-1))
-        Znew = robjects.r.matrix(Znewvec, nrow=x_test.shape[0], ncol=x_test.shape[1], byrow=True)
+        breakpoint()
+        # this is kind of a hack to save time
+        if (use_saved_x_test and not self.have_saved_x_test) or not use_saved_x_test:
+            self.Znewvec = robjects.FloatVector(x_test.reshape(-1))
+            self.Znew = robjects.r.matrix(self.Znewvec, nrow=x_test.shape[0], ncol=x_test.shape[1], byrow=True)
+            self.have_saved_x_test = True
 
-        return np.ascontiguousarray(self.base.t(self.bkmr.SamplePred(self.fitkm, Znew = Znew, Xnew = self.base.cbind(0), sel=14))) # (n, 1)
+        return np.ascontiguousarray(self.base.t(self.bkmr.SamplePred(self.fitkm, Znew = self.Znew, Xnew = self.base.cbind(0), sel=sel.item()))) # (n, 1)
+    """
 
-        
+    def sample_f_post(self, x_test):
+
+        # first check if x_test has changed
+        if self.have_stored_samples:
+            if not np.array_equal(self.x_test, x_test):
+                self.have_stored_samples = False
+
+        if not self.have_stored_samples:
+            self.have_stored_samples = True
+            self.x_test = x_test
+            
+            self.Znewvec = robjects.FloatVector(x_test.reshape(-1))
+            self.Znew = robjects.r.matrix(self.Znewvec, nrow=x_test.shape[0], ncol=x_test.shape[1], byrow=True)
+            
+            self.samples = np.ascontiguousarray(self.bkmr.SamplePred(self.fitkm, Znew = self.Znew, Xnew = self.base.cbind(0), sel=self.base.seq(int(self.n_samp/2), self.n_samp))) # (samps, inputs)
+            
+            self.sample_idx = np.random.permutation(np.arange(self.samples.shape[0])) # posterior samples for inference
+            self.sample_iter = 0
+
+        if self.sample_iter == self.samples.shape[0]:
+            self.sample_iter = 0
+
+        f = self.samples[self.sample_iter, :].reshape(-1,1)
+        self.sample_iter += 1
+        return f
+
 

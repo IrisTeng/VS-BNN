@@ -6,6 +6,7 @@ from torch.distributions.gamma import Gamma
 from torch.distributions.multivariate_normal import MultivariateNormal
 import numpy as np
 import math
+import os
 
 import layers_v2 as layers
 
@@ -367,7 +368,6 @@ class RffHs(nn.Module):
 
         log_prob = self.log_prob(y, y_pred)
         #log_prob = 0
-        breakpoint()
         return -log_prob + temperature*kl_divergence
 
     def loss(self, x, y, x_linear=None, temperature=1, n_samp=1):
@@ -400,10 +400,13 @@ class RffHs(nn.Module):
     def fixed_point_updates(self, x, y, x_linear=None, temperature=1): 
         self.layer_in.fixed_point_updates() # update horseshoe aux variables
 
+        #### COMMENTING OUT OUTPUT LAYER UPDATES SINCE NOW PART OF LOSS FUNCTION ####
+        """
         h = self.layer_in(x, weights_type='sample_post') # hidden units based on sample from variational dist
         self.layer_out.fixed_point_updates(h, y) # conjugate update of output weights 
-
         self.layer_out.sample_weights(store=True) # sample output weights from full conditional
+        """
+        ####
 
         if self.linear_term:
             if self.infer_noise:
@@ -645,19 +648,23 @@ class RffBeta(nn.Module):
 
 
 
-def train(model, optimizer, x, y, n_epochs, x_linear=None, n_warmup = 0, n_rep_opt=10, print_freq=None, frac_start_save=1):
+def train(model, optimizer, x, y, n_epochs, x_linear=None, n_warmup = 0, n_rep_opt=10, print_freq=None, frac_start_save=1, frac_lookback=0.5, path_checkpoint='./'):
+    '''
+    frac_lookback will only result in reloading early stopped model if frac_lookback < 1 - frac_start_save
+    '''
+
     loss = torch.zeros(n_epochs)
-    loss_best = 1e9 # Need better way of initializing to make sure it's big enough
+    loss_best = torch.tensor(float('inf'))
+    loss_best_saved = torch.tensor(float('inf'))
+    saved_model = False
     model.precompute(x, x_linear)
 
     for epoch in range(n_epochs):
 
-        #with torch.no_grad():
-        #    print('before:', model.loss(x, y, x_linear=x_linear, temperature=1).item())
-
         # TEMPERATURE HARDECODED, NEED TO FIX
         #temperature_kl = 0. if epoch < n_epochs/2 else 1
-        temperature_kl = epoch / (n_epochs/2) if epoch < n_epochs/2 else 1
+        #temperature_kl = epoch / (n_epochs/2) if epoch < n_epochs/2 else 1
+        temperature_kl = epoch / (n_epochs/10) if epoch < n_epochs/10 else 1
         #temperature_kl = 0. # SET TO ZERO TO IGNORE KL
 
         for i in range(n_rep_opt):
@@ -668,33 +675,51 @@ def train(model, optimizer, x, y, n_epochs, x_linear=None, n_warmup = 0, n_rep_o
             optimizer.zero_grad()
             l.backward(retain_graph=True)
             optimizer.step()
-        #print('temp: ', temperature_kl)
-
-        #with torch.no_grad():
-        #    print('after:', model.loss(x, y, x_linear=x_linear, temperature=1).item())
 
         loss[epoch] = l.item()
 
         with torch.no_grad():
             model.fixed_point_updates(x, y, x_linear=x_linear, temperature=1)
-            #pass
-            #model.layer_in.fixed_point_updates()
 
-        if epoch > frac_start_save*n_epochs and loss[epoch] < loss_best: 
-            print('saving...')
+        # print state
+        if print_freq is not None:
+            if (epoch + 1) % print_freq == 0:
+                model.print_state(x, y, epoch+1, n_epochs)
+
+        # see if improvement made:
+        if loss[epoch] < loss_best:
             loss_best = loss[epoch]
+
+        # save model
+        if epoch > frac_start_save*n_epochs and loss[epoch] < loss_best_saved:
+            print('saving mode at epoch = %d' % epoch)
+            saved_model = True
+            loss_best_saved = loss[epoch]
             torch.save({
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
                 'loss': loss[epoch],
-            }, 'checkpoint.tar')
+            },  os.path.join(path_checkpoint, 'checkpoint.tar'))
 
-        if print_freq is not None:
-            if (epoch + 1) % print_freq == 0:
-                model.print_state(x, y, epoch+1, n_epochs)
+        # end training if no improvement made in a while and more than half way done
+        epoch_lookback = np.maximum(1, int(epoch - .25*n_epochs)) # lookback is 25% of samples by default
+        if epoch_lookback > frac_start_save*n_epochs+1:
+            loss_best_lookback = torch.min(loss[epoch_lookback:epoch+1])
+            percent_improvement = (loss_best - loss_best_lookback)/torch.abs(loss_best) # positive is better
+            if percent_improvement < 0.0:
+                print('stopping early at epoch = %d' % epoch)
+                break
 
-    return loss
+    # reload best model if saving
+    if saved_model:
+        checkpoint = torch.load(os.path.join(path_checkpoint, 'checkpoint.tar'))
+        model.load_state_dict(checkpoint['model_state_dict'])
+        print('reloading best model from epoch = %d' % checkpoint['epoch'])
+        model.eval()
+
+
+    return loss[:epoch]
 
 
 def train_score(model, optimizer, x, y, n_epochs, x_linear=None, n_warmup = 0, n_rep_opt=10, print_freq=None, frac_start_save=1):

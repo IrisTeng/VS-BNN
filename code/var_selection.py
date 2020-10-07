@@ -56,7 +56,7 @@ parser.add_argument('--sig2_n_step', type=float, default=1)
 args = parser.parse_args()
 
 if not os.path.exists(args.dir_out):
-    os.makedirs(os.path.join(args.dir_out, 'output/'))
+    os.makedirs(args.dir_out)
 
 with open(os.path.join(args.dir_out, 'program_info.txt'), 'w') as f:
     f.write('Call:\n%s\n\n' % ' '.join(sys.argv[:]))
@@ -130,21 +130,36 @@ for i, n_obs in enumerate(n_obs_list):
                             layer_in_name=args.layer_in_name, 
                             s_loc_prior=args.s_loc_prior,
                             s_scale_prior=args.s_scale_prior)
-                        m.train(n_epochs=args.epochs)
+                        loss = m.train(n_epochs=args.epochs, path_checkpoint=args.dir_out)
 
                     elif args.model=='BKMR':
-                        m = models.BKMRVarImportance(Z, Y, sig2)
+
+                        Y2 = Y.copy()
+                        Y = Y2.copy()
+                        print('mean1', Y.mean())
+                        m = models.BKMRVarImportance(Z, Y2, sig2)    
                         m.train(n_samp=args.bkmr_n_samp)
+                        print('mean1', Y.mean())
+
 
                     psi_est = m.estimate_psi(Z)
                     res['psi_mean'][i,j,l,s,k,:dim_in] = psi_est[0]
                     res['psi_var'][i,j,l,s,k,:dim_in] = psi_est[1]
 
+                    ## loss if available
+                    if 'loss' in locals():
+                        fig, ax = plt.subplots()
+                        ax.plot(loss.numpy())
+                        ax.set_xlabel('iterations')
+                        ax.set_ylabel('loss')
+                        fig.savefig(os.path.join(args.dir_out, 
+                                    'loss-n_obs=%d-dim_in=%d-rff_dim=%d-sig2%.2f-rep=%d.png' % (n_obs_list[i],dim_in_list[j],rff_dim_list[l],sig2_list[s],k)))
+                        plt.close('all')
+
                     ## slices
                     if hasattr(m, 'sample_f_post'):
                         #fig, ax = util.plot_slices(m.sample_f_post, Z, Y, quantile=.5, n_samp=500, figsize=(4*dim_in,4))
                         fig, ax = util.plot_slices(m.sample_f_post, Z, Y, quantile=.5, n_samp=100, figsize=(4*dim_in,4))
-                        
 
                         fig.savefig(os.path.join(args.dir_out, 
                                     'slices-n_obs=%d-dim_in=%d-rff_dim=%d-sig2%.2f-rep=%d.png' % (n_obs_list[i],dim_in_list[j],rff_dim_list[l],sig2_list[s],k)))
