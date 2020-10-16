@@ -662,9 +662,9 @@ def train(model, optimizer, x, y, n_epochs, x_linear=None, n_warmup = 0, n_rep_o
     for epoch in range(n_epochs):
 
         # TEMPERATURE HARDECODED, NEED TO FIX
-        #temperature_kl = 0. if epoch < n_epochs/2 else 1
-        #temperature_kl = epoch / (n_epochs/2) if epoch < n_epochs/2 else 1
-        temperature_kl = epoch / (n_epochs/10) if epoch < n_epochs/10 else 1
+        #temperature_kl = 0. if epoch < n_epochs/2 else 1.0
+        #temperature_kl = epoch / (n_epochs/2) if epoch < n_epochs/2 else 1.0
+        temperature_kl = epoch / (n_epochs/10) if epoch < n_epochs/10 else 1.0
         #temperature_kl = 0. # SET TO ZERO TO IGNORE KL
 
         for i in range(n_rep_opt):
@@ -676,6 +676,19 @@ def train(model, optimizer, x, y, n_epochs, x_linear=None, n_warmup = 0, n_rep_o
             l.backward(retain_graph=True)
             optimizer.step()
 
+            ##
+            #print('------------- %d -------------' % epoch)
+            #print('s     :', model.layer_in.s_loc.data)
+            #print('grad  :', model.layer_in.s_loc.grad)
+
+            #model.layer_in.s_loc.grad.zero_()
+            #kl = model.layer_in.kl_divergence()
+            #kl.backward()
+            #if epoch > 500:
+            #    breakpoint()
+            #print('grad kl:', model.layer_in.s_loc.grad)
+            ##
+
         loss[epoch] = l.item()
 
         with torch.no_grad():
@@ -686,8 +699,8 @@ def train(model, optimizer, x, y, n_epochs, x_linear=None, n_warmup = 0, n_rep_o
             if (epoch + 1) % print_freq == 0:
                 model.print_state(x, y, epoch+1, n_epochs)
 
-        # see if improvement made:
-        if loss[epoch] < loss_best:
+        # see if improvement made (only used if KL isn't tempered)
+        if loss[epoch] < loss_best and temperature_kl==1.0:
             loss_best = loss[epoch]
 
         # save model
@@ -717,7 +730,6 @@ def train(model, optimizer, x, y, n_epochs, x_linear=None, n_warmup = 0, n_rep_o
         model.load_state_dict(checkpoint['model_state_dict'])
         print('reloading best model from epoch = %d' % checkpoint['epoch'])
         model.eval()
-
 
     return loss[:epoch]
 

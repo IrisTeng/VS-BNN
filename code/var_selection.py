@@ -41,6 +41,7 @@ parser.add_argument('--epochs', type=int, default=16)
 
 # RffVarSelect options
 parser.add_argument('--layer_in_name', type=str, default='RffVarSelectLogitNormalLayer')
+parser.add_argument('--lr', type=float, default=0.001)
 parser.add_argument('--s_loc_prior', type=float, default=0.0)
 parser.add_argument('--s_scale_prior', type=float, default=1.0)
 
@@ -130,7 +131,7 @@ for i, n_obs in enumerate(n_obs_list):
                             layer_in_name=args.layer_in_name, 
                             s_loc_prior=args.s_loc_prior,
                             s_scale_prior=args.s_scale_prior)
-                        loss = m.train(n_epochs=args.epochs, path_checkpoint=args.dir_out)
+                        loss = m.train(n_epochs=args.epochs, lr=args.lr, path_checkpoint=args.dir_out)
 
                     elif args.model=='BKMR':
 

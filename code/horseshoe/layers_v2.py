@@ -445,6 +445,70 @@ class RffVarSelectLogitNormalLayer(_RffVarSelectLayer):
     def get_variational(self):
         return LogitNormal(loc=self.s_loc, scale=self.transform(self.s_scale_untrans))
 
+class RffVarSelectLogitNormalLayerHyper(_RffVarSelectLayer):
+    '''
+    '''
+    def __init__(self, dim_in, dim_out, s_loc_prior=0.0, s_scale_prior=1.0, mu_loc_prior=0.0, mu_scale_prior=1.0):
+        super().__init__(dim_in, dim_out)
+        '''
+        '''
+        ### variational parameters
+
+        # input unit indicators
+        self.mu_loc = nn.Parameter(torch.empty(self.dim_in)) # of hyperprior
+        self.mu_scale_untrans = nn.Parameter(torch.empty(self.dim_in)) # of hyperprior
+
+        self.s_loc = nn.Parameter(torch.empty(self.dim_in)) # of underlying normal
+        self.s_scale_untrans = nn.Parameter(torch.empty(self.dim_in)) # of underlying normal
+
+        ### priors
+
+        # input unit indicators
+        self.mu_loc_prior = torch.tensor(mu_loc_prior) # of underlying normal
+        self.mu_scale_prior = torch.tensor(mu_scale_prior) # of underlying normal
+
+        self.s_scale_prior = torch.tensor(s_scale_prior) # of underlying normal
+
+        ### other stuff
+        self.transform = nn.Softplus() # ensure correct range
+
+        self.init_parameters()
+
+    def init_parameters(self):
+        self.mu_loc.data.normal_(0, 1e-2)
+        self.mu_scale_untrans.data.normal_(1e-4, 1e-2)
+
+        self.s_loc.data.normal_(0, 1e-2)
+        self.s_scale_untrans.data.normal_(1e-4, 1e-2)
+
+        self.sample_variational(store=True)
+
+    def get_prior(self):
+        pass
+
+    def get_variational(self):
+        return LogitNormal(loc=self.s_loc, scale=self.transform(self.s_scale_untrans))
+
+    def sample_prior(self, shape=torch.Size([]), store=False):
+        p_mu = Normal(self.mu_loc_prior*torch.ones(self.dim_in), self.mu_scale_prior*torch.ones(self.dim_in))
+        p_s = LogitNormal(loc=p_mu.rsample(shape), scale=self.s_scale_prior*torch.ones(self.dim_in))
+        s = p_s.rsample(shape)
+        if store: self.s = s
+        return s
+
+    def log_prob_variational(self):
+        pass
+
+    def kl_divergence(self):
+        p_mu = Normal(self.mu_loc_prior*torch.ones(self.dim_in), self.mu_scale_prior*torch.ones(self.dim_in))
+        q_mu = Normal(loc=self.mu_loc, scale=self.transform(self.mu_scale_untrans))
+        q_s = get_variational()
+
+        q_s.entropy()
+        kl_divergence(q_mu, p_mu)
+
+        
+
 
 def get_layer(name):
     if name == 'LinearLayer':
