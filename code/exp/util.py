@@ -8,8 +8,8 @@ import seaborn as sns
 import os
 import sys
 
-import rpy2.robjects as robjects
-from rpy2.robjects.packages import importr
+# import rpy2.robjects as robjects
+# from rpy2.robjects.packages import importr
 
 def standardize_data(original_x_train, original_y_train, original_x_test, original_y_test,
                      mean_x=None, std_x=None, mean_y=None, std_y=None):
@@ -22,7 +22,7 @@ def standardize_data(original_x_train, original_y_train, original_x_test, origin
     train_x = (original_x_train - mean_x) / std_x
     train_y = ((original_y_train - mean_y) / std_y).reshape(-1, 1)
 
-    test_x = ((original_x_test - mean_x) / std_x).reshape(-1, 1)
+    test_x = ((original_x_test - mean_x) / std_x)
     test_y = ((original_y_test - mean_y) / std_y).reshape(-1, 1)
 
     return train_x, train_y, test_x, test_y
@@ -37,7 +37,7 @@ def sin_toy(n_obs, dim_in, sig2=.01, seed=0):
     
     return Z, Y.reshape(-1,1), sig2
 
-def rbf_toy(n_obs, dim_in, sig2=.01, seed_f=8, seed_zy=0):
+def rbf_toy(n_obs, dim_in, lengthscale, sig2=.01, seed_f=8, seed_zy=0):
 
     r_f = np.random.RandomState(seed_f)  
     r_zy = np.random.RandomState(seed_zy)  
@@ -45,7 +45,7 @@ def rbf_toy(n_obs, dim_in, sig2=.01, seed_f=8, seed_zy=0):
     # sample 1D function
     n_obs_sample = 500
     sig2_f = .1
-    kernel = GPy.kern.RBF(input_dim=1, variance=1, lengthscale=1)
+    kernel = GPy.kern.RBF(input_dim=1, variance=1, lengthscale=lengthscale)
     Z = r_f.uniform(-5,5,(n_obs_sample,1))
     f = r_f.multivariate_normal(np.zeros(n_obs_sample), kernel.K(Z), 1).reshape(-1,1)
     Y = f + r_f.normal(0,sig2_f,(n_obs_sample,1))
@@ -57,31 +57,32 @@ def rbf_toy(n_obs, dim_in, sig2=.01, seed_f=8, seed_zy=0):
     # sample Z data that is actually used (not using same random state)
     # and get Y data by predicting using fitted GP
     Z = r_zy.uniform(-5, 5, (n_obs, dim_in))
-    Y,_ = m.predict(Z[:,0].reshape(-1,1)) + r_zy.normal(0,sig2,(n_obs,1))
+    Y_true, _ = m.predict(Z[:,0].reshape(-1,1))
+    Y = Y_true + r_zy.normal(0,sig2,(n_obs,1))
 
-    return Z, Y.reshape(-1,1), sig2
+    return Z, Y.reshape(-1,1), Y_true.reshape(-1,1)
 
-def bkmr_toy(n_obs, dim_in, sig2=.5, seed=0):
-    '''
-    generates toy data by running SimData function from bkrm R package
-    requires rpy2 to be installed
-    Note: random seed not implemented
-    '''
-    #r = robjects.r
-    bkmr = importr('bkmr') 
-    base = importr('base') 
-
-    n = robjects.IntVector([n_obs])
-    M = robjects.IntVector([dim_in])
-    sigsq_true = robjects.FloatVector([sig2])
-
-    base.set_seed(robjects.FloatVector([seed]))
-    out = bkmr.SimData(n=n, M=M, beta_true=0, sigsq_true = sigsq_true, Zgen="realistic")
-
-    Z = np.asarray(out.rx2['Z'])
-    Y = np.asarray(out.rx2['y'])
-    
-    return Z, Y.reshape(-1,1), sig2
+# def bkmr_toy(n_obs, dim_in, sig2=.5, seed=0):
+#     '''
+#     generates toy data by running SimData function from bkmr R package
+#     requires rpy2 to be installed
+#     Note: random seed not implemented
+#     '''
+#     #r = robjects.r
+#     bkmr = importr('bkmr')
+#     base = importr('base')
+#
+#     n = robjects.IntVector([n_obs])
+#     M = robjects.IntVector([dim_in])
+#     sigsq_true = robjects.FloatVector([sig2])
+#
+#     base.set_seed(robjects.FloatVector([seed]))
+#     out = bkmr.SimData(n=n, M=M, beta_true=0, sigsq_true = sigsq_true, Zgen="realistic")
+#
+#     Z = np.asarray(out.rx2['Z'])
+#     Y = np.asarray(out.rx2['y'])
+#
+#     return Z, Y.reshape(-1,1), sig2
 
 def workshop_data(n_obs_samp=None, dim_in_samp=None, dir_in='../data/workshop', seed=0):
     '''
@@ -114,7 +115,7 @@ def workshop_data(n_obs_samp=None, dim_in_samp=None, dir_in='../data/workshop', 
     return Z, X, Y.reshape(-1,1)
     
 
-def load_data(toy_name, n_obs, dim_in, sig2=None, seed=0):
+def load_data(toy_name, n_obs, dim_in, lengthscale=1, sig2=None, seed=0):
     '''
     inputs:
         toy_name: 
@@ -136,7 +137,7 @@ def load_data(toy_name, n_obs, dim_in, sig2=None, seed=0):
         Z, Y, sig2 = sin_toy(n_obs, dim_in, sig2, seed)
         X = None
     elif toy_name == 'rbf':
-        Z, Y, sig2 = rbf_toy(n_obs, dim_in, sig2, seed_zy=seed)
+        Z, Y, sig2 = rbf_toy(n_obs, dim_in, lengthscale, sig2, seed_zy=seed)
         X = None
     elif toy_name == 'bkmr':
         Z, Y, sig2 = rbf_toy(n_obs, dim_in, sig2, seed)
@@ -287,6 +288,4 @@ def resid_linear_model(X, Y):
     '''
     beta_hat = np.linalg.pinv(X.T @ X) @ X.T @ Y
     return Y - X @ beta_hat
-
-
 

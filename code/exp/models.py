@@ -61,7 +61,8 @@ class RffVarImportance(object):
         self.dim_in = X.shape[1]
 
 
-    def train(self, X, Y, sig2, rff_dim=1200, batch_size=16, epochs=16):
+    def train(self, X, Y, sig2, rff_scale = 1,
+              rff_dim=1200, batch_size=16, epochs=1):
 
         model_graph = tf.Graph()
         model_sess = tf.Session(graph=model_graph)
@@ -74,7 +75,7 @@ class RffVarImportance(object):
 
             rff_layer = kernel_layers.RandomFourierFeatures(output_dim=rff_dim,
                                                             kernel_initializer='gaussian',
-                                                            trainable=True)
+                                                            scale=rff_scale)
 
             ## define model
             rff_output = tf.cast(rff_layer(X_tr) * np.sqrt(2. / rff_dim), dtype=tf.float64)
@@ -119,7 +120,7 @@ class RffVarImportance(object):
                           "Problem occurred at Step {}\n"
                           "================================".format(batch_id))
 
-        self.beta = np.matmul(weight_cov_val, covl_xy_val)[:,0]
+        self.beta = np.matmul(weight_cov_val, covl_xy_val)
 
         self.Sigma_beta = weight_cov_val * sig2**2
 
@@ -127,6 +128,15 @@ class RffVarImportance(object):
 
         self.RFF_bias = rff_bias  # (D, )
 
+
+    def predict(self, X):
+        D = self.RFF_weight.shape[1]
+        rff_new = np.sqrt(2. / D) * np.cos(np.matmul(X, self.RFF_weight) +
+                                           self.RFF_bias)
+        pred_mean = np.matmul(rff_new, self.beta)
+        pred_cov = np.matmul(np.matmul(rff_new, self.Sigma_beta), rff_new.T)
+
+        return pred_mean.reshape((-1, 1)), pred_cov
 
 
     def estimate_psi(self, X, n_samp=1000):
@@ -159,3 +169,6 @@ class RffVarImportance(object):
             psi_var[l] = np.var(psi_samp)
 
         return psi_mean, psi_var
+
+    def return_value(self):
+        return self.RFF_weight, self.RFF_bias, self.beta, self.Sigma_beta
