@@ -148,7 +148,7 @@ class rff_data(toy_dataset):
         self.y_std = np.sqrt(.001)
         super(rff_data, self).__init__(name)
 
-    def sample_f(self, W0, b, beta, n_train_max, n_test, seed=0):
+    def sample_f(self, W0, b, n_train_max, n_test, seed=0):
         X_train_1 = np.random.uniform(0, 0.4, (n_train_max // 2, self.dim_in))
         X_train_2 = np.random.uniform(0.6, 1, (n_train_max // 2, self.dim_in))
         self.X_train_max = np.concatenate([X_train_1, X_train_2], axis=0)
@@ -156,6 +156,7 @@ class rff_data(toy_dataset):
         self.X_test = np.random.uniform(self.x_min, self.x_max, (n_test, self.dim_in))
         self.X = np.concatenate([self.X_train_max, self.X_test], axis=0)
         X_val = np.sqrt(2. / W0.shape[1]) * np.cos(np.matmul(self.X, W0) + b)
+        beta = np.random.normal(size=(W0.shape[1], 1))
         f = np.matmul(X_val, beta)
         self.f_train_max = f[:n_train_max].reshape(-1,1)
         self.f_test = f[-n_test:].reshape(-1,1)
@@ -183,7 +184,7 @@ class rff_high_dim(toy_dataset):
         self.y_std = np.sqrt(.001)
         super(rff_high_dim, self).__init__(name)
 
-    def sample_f(self, W0, b, beta, n_train_max, n_test, seed=0):
+    def sample_f(self, W0, b, n_train_max, n_test, seed=0):
         X_train_1 = np.random.uniform(0, 0.4, (n_train_max // 2, self.dim_in))
         X_train_2 = np.random.uniform(0.6, 1, (n_train_max // 2, self.dim_in))
         self.X_train_max = np.concatenate([X_train_1, X_train_2], axis=0)
@@ -192,6 +193,7 @@ class rff_high_dim(toy_dataset):
         self.X = np.concatenate([self.X_train_max, self.X_test], axis=0)
         X_true = self.X[:, :5]
         X_val = np.sqrt(2. / W0.shape[1]) * np.cos(np.matmul(X_true, W0) + b)
+        beta = np.random.normal(size=(W0.shape[1], 1))
         f = np.matmul(X_val, beta)
         self.f_train_max = f[:n_train_max].reshape(-1,1)
         self.f_test = f[-n_test:].reshape(-1,1)

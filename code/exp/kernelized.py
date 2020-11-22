@@ -20,6 +20,8 @@ from __future__ import print_function
 
 import numpy as np
 import six
+import tensorflow.compat.v1 as tf
+from tensorflow import keras
 
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import ops
@@ -31,27 +33,23 @@ from tensorflow.python.ops import gen_math_ops
 from tensorflow.python.ops import init_ops
 from tensorflow.python.ops import nn
 
+
 _SUPPORTED_RBF_KERNEL_TYPES = ['gaussian', 'laplacian']
 
-
-class RandomFourierFeatures(base_layer.Layer):
+class RandomFourierFeatures(tf.keras.layers.Layer):
   r"""Layer that maps its inputs using random Fourier features.
-
   This layer implements a feature map \\(\phi: \mathbb{R}^d \rightarrow
   \mathbb{R}^D\\) which approximates shift-invariant kernels. A kernel function
   K(x, y) defined over \\(\mathbb{R}^d x \mathbb{R}^d\\) is shift-invariant if
   K(x, y) = k(x-y) for some function defined over \\(\mathbb{R}^d\\). Many
   popular Radial Basis Functions (in short RBF), including gaussian and
   laplacian kernels are shift-invariant.
-
   The layer approximates a (shift invariant) kernel K in the following sense:
     up to a scaling factor, for all inputs \\(x, y \in \mathbb{R}^d\\)
         \\(\phi(x)^T \cdot \phi(y) \approx K(x, y)\\)
-
   The implementation of this layer is based on the following paper:
   "Random Features for Large-Scale Kernel Machines" by Ali Rahimi and Ben Recht.
   (link: https://people.eecs.berkeley.edu/~brecht/papers/07.rah.rec.nips.pdf)
-
   The distribution from which the parameters of the random features map (layer)
   are sampled, determines which shift-invariant kernel the layer approximates
   (see paper for more details). The users can use the distribution of their
@@ -59,11 +57,9 @@ class RandomFourierFeatures(base_layer.Layer):
   approximation of the following RBF kernels:
   - Gaussian: \\(K(x, y) = e^{-\frac{\|x-y\|_2^2}{2 \cdot scale^2}}\\)
   - Laplacian: \\(K(x, y) = e^{-\frac{\|x-y\|_1}{scale}}\\)
-
   NOTE: Unlike the map described in the paper and the scikit-learn
   implementation, the output of this layer does not apply the sqrt(2/D)
   normalization factor.
-
   Usage for ML: Typically, this layer is used to "kernelize" linear models by
   applying a non-linear transformation (this layer) to the input features and
   then training a linear model on top of the transformed features. Depending on
@@ -71,7 +67,6 @@ class RandomFourierFeatures(base_layer.Layer):
   linear model results to models that are equivalent (up to approximation) to
   kernel SVMs (for hinge loss), kernel logistic regression (for logistic loss),
   kernel linear regression (for squared loss) etc.
-
   Example of building a kernel multinomial logistic regression model with
   Gaussian kernel in keras:
   ```python
@@ -80,15 +75,12 @@ class RandomFourierFeatures(base_layer.Layer):
       kernel_initializer='gaussian',
       scale=5.0,
       ...)
-
   model = tf.keras.models.Sequential()
   model.add(random_features_layer)
   model.add(tf.keras.layers.Dense(units=num_classes, activation='softmax')
-
   model.compile(
     loss=tf.keras.losses.categorical_crossentropy, optimizer=..., metrics=...)
   ```
-
   To use another kernel, replace the layer creation command with:
   ```python
   random_features_layer = RandomFourierFeatures(
@@ -97,7 +89,6 @@ class RandomFourierFeatures(base_layer.Layer):
       scale=...,
       ...)
   ```
-
   Arguments:
     output_dim: Positive integer, the dimension of the layer's output, i.e., the
       number of random features used to approximate the kernel.
@@ -122,7 +113,6 @@ class RandomFourierFeatures(base_layer.Layer):
     trainable: Whether the scaling parameter of th layer is trainable. Defaults
       to False.
     name: name for the RandomFourierFeatures layer.
-
   Raises:
     ValueError: if output_dim or stddev are not positive or if the provided
       kernel_initializer is not supported.
@@ -133,7 +123,9 @@ class RandomFourierFeatures(base_layer.Layer):
                kernel_initializer='gaussian',
                scale=None,
                trainable=False,
+               seed=None,
                name=None,
+               dtype=tf.float64,
                **kwargs):
     if output_dim <= 0:
       raise ValueError(
@@ -148,13 +140,14 @@ class RandomFourierFeatures(base_layer.Layer):
       raise ValueError('When provided, `scale` should be a positive float. '
                        'Given: {}.'.format(scale))
     super(RandomFourierFeatures, self).__init__(
-        trainable=trainable, name=name, **kwargs)
+        trainable=trainable, name=name, dtype=dtype, **kwargs)
     self.output_dim = output_dim
     self.kernel_initializer = kernel_initializer
     self.scale = scale
+    self.seed = seed
 
   def build(self, input_shape):
-    input_shape = tensor_shape.TensorShape(input_shape)
+    input_shape = tf.TensorShape(input_shape)
     # TODO(sibyl-vie3Poto): Allow higher dimension inputs. Currently the input is expected
     # to have shape [batch_size, dimension].
     if input_shape.rank != 2:
@@ -165,26 +158,31 @@ class RandomFourierFeatures(base_layer.Layer):
       raise ValueError(
           'The last dimension of the inputs to `RandomFourierFeatures` '
           'should be defined. Found `None`.')
-    self.input_spec = input_spec.InputSpec(
+    self.input_spec = tf.keras.layers.InputSpec(
         ndim=2, axes={1: input_shape.dims[1].value})
     input_dim = input_shape.dims[1].value
 
     kernel_initializer = _get_random_features_initializer(
-        self.kernel_initializer, shape=(input_dim, self.output_dim))
+        self.kernel_initializer,
+        shape=(input_dim, self.output_dim),
+        seed=self.seed)
 
     unscaled_kernel = self.add_weight(
         name='unscaled_random_features',
         shape=(input_dim, self.output_dim),
-        dtype=dtypes.float32,
+        dtype=tf.float64,
         initializer=kernel_initializer,
         trainable=False)
 
     self.bias = self.add_weight(
         name='random_features_bias',
         shape=(self.output_dim,),
-        dtype=dtypes.float32,
-        initializer=init_ops.random_uniform_initializer(
-            minval=0.0, maxval=2 * np.pi, dtype=dtypes.float32),
+        dtype=tf.float64,
+        initializer=tf.random_uniform_initializer(
+            minval=0.0,
+            maxval=2 * np.pi,
+            dtype=tf.float64,
+            seed=self.seed),
         trainable=False)
 
     if self.scale is None:
@@ -192,19 +190,19 @@ class RandomFourierFeatures(base_layer.Layer):
     scale = self.add_weight(
         name='random_features_scale',
         shape=(1,),
-        dtype=dtypes.float32,
-        initializer=init_ops.constant_initializer(self.scale),
+        dtype=tf.float64,
+        initializer=tf.constant_initializer(self.scale),
         trainable=True,
         constraint='NonNeg')
     self.kernel = (1.0 / scale) * unscaled_kernel
     super(RandomFourierFeatures, self).build(input_shape)
 
   def call(self, inputs):
-    inputs = ops.convert_to_tensor(inputs, dtype=self.dtype)
-    inputs = gen_math_ops.cast(inputs, dtypes.float32)
-    outputs = gen_math_ops.mat_mul(inputs, self.kernel)
-    outputs = nn.bias_add(outputs, self.bias)
-    return gen_math_ops.cos(outputs)
+    inputs = tf.convert_to_tensor(inputs, dtype=self.dtype)
+    inputs = tf.cast(inputs, tf.float64)
+    outputs = tf.linalg.matmul(inputs, self.kernel)
+    outputs = tf.nn.bias_add(outputs, self.bias)
+    return tf.math.cos(outputs)
 
   def compute_output_shape(self, input_shape):
     input_shape = tensor_shape.TensorShape(input_shape)
@@ -218,7 +216,7 @@ class RandomFourierFeatures(base_layer.Layer):
   def get_config(self):
     kernel_initializer = self.kernel_initializer
     if isinstance(self.kernel_initializer, init_ops.Initializer):
-      kernel_initializer = initializers.serialize(self.kernel_initializer)
+      kernel_initializer = tf.keras.initializers.serialize(self.kernel_initializer)
     config = {
         'output_dim': self.output_dim,
         'kernel_initializer': kernel_initializer,
@@ -228,21 +226,21 @@ class RandomFourierFeatures(base_layer.Layer):
     return dict(list(base_config.items()) + list(config.items()))
 
 
-def _get_random_features_initializer(initializer, shape):
+def _get_random_features_initializer(initializer, shape, seed):
   """Returns Initializer object for random features."""
 
   def _get_cauchy_samples(loc, scale, shape):
-    probs = np.random.uniform(low=0., high=1., size=shape)
+    probs = np.random.uniform(low=0., high=1., size=shape, seed=seed)
     return loc + scale * np.tan(np.pi * (probs - 0.5))
 
   random_features_initializer = initializer
   if isinstance(initializer, six.string_types):
     if initializer.lower() == 'gaussian':
-      random_features_initializer = init_ops.random_normal_initializer(
-          stddev=1.0)
+      random_features_initializer = tf.random_normal_initializer(
+          stddev=1.0, seed=seed)
     elif initializer.lower() == 'laplacian':
-      random_features_initializer = init_ops.constant_initializer(
-          _get_cauchy_samples(loc=0.0, scale=1.0, shape=shape))
+      random_features_initializer = tf.constant_initializer(
+          _get_cauchy_samples(loc=0.0, scale=1.0, shape=shape, seed=seed))
 
     else:
       raise ValueError(

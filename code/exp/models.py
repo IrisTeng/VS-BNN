@@ -54,40 +54,41 @@ class GPyVarImportance(object):
         return psi_mean, psi_var
 
 
-
 class RffVarImportance(object):
-    def __init__(self, X):
+    def __init__(self, X, sig2=1., rff_scale=1., rff_dim=1200, seed=None):
         super().__init__()
         self.dim_in = X.shape[1]
 
+        self.model_graph = tf.Graph()
+        self.model_sess = tf.Session(graph=self.model_graph)
+        self.sig2 = sig2
+        self.rff_scale = rff_scale
+        self.rff_dim = rff_dim
+        self.seed = seed
 
-    def train(self, X, Y, sig2, rff_scale = 1,
-              rff_dim=1200, batch_size=16, epochs=1):
+        # Define model graph.
+        with self.model_graph.as_default():
+            self.X_tr = tf.placeholder(dtype=tf.float64, shape=[None, self.dim_in])
+            self.Y_true = tf.placeholder(dtype=tf.float64, shape=[None, 1])
+            self.H_inv = tf.placeholder(dtype=tf.float64, shape=[self.rff_dim, self.rff_dim])
+            self.Phi_y = tf.placeholder(dtype=tf.float64, shape=[self.rff_dim, 1])
 
-        model_graph = tf.Graph()
-        model_sess = tf.Session(graph=model_graph)
-
-        with model_graph.as_default():
-            X_tr = tf.placeholder(dtype=tf.float64, shape=[None, self.dim_in])
-            Y_true = tf.placeholder(dtype=tf.float64, shape=[None, 1])
-            H_inv = tf.placeholder(dtype=tf.float64, shape=[rff_dim, rff_dim])
-            Phi_y = tf.placeholder(dtype=tf.float64, shape=[rff_dim, 1])
-
-            rff_layer = kernel_layers.RandomFourierFeatures(output_dim=rff_dim,
-                                                            kernel_initializer='gaussian',
-                                                            scale=rff_scale)
+            self.rff_layer = kernel_layers.RandomFourierFeatures(
+                output_dim=self.rff_dim,
+                kernel_initializer='gaussian',
+                scale=self.rff_scale,
+                seed=self.seed)
 
             ## define model
-            rff_output = tf.cast(rff_layer(X_tr) * np.sqrt(2. / rff_dim), dtype=tf.float64)
+            self.rff_output = tf.cast(self.rff_layer(self.X_tr) * np.sqrt(2. / self.rff_dim),
+                                      dtype=tf.float64)
+            self.weight_cov = util.minibatch_woodbury_update(self.rff_output, self.H_inv)
+            self.covl_xy = util.minibatch_interaction_update(self.Phi_y, self.rff_output, self.Y_true)
 
-            weight_cov = util.minibatch_woodbury_update(rff_output, H_inv)
+            self.random_feature_weight = self.rff_layer.kernel
+            self.random_feature_bias = self.rff_layer.bias
 
-            covl_xy = util.minibatch_interaction_update(Phi_y, rff_output, Y_true)
-
-            random_feature_weight = rff_layer.kernel
-
-            random_feature_bias = rff_layer.bias
-
+    def train(self, X, Y, batch_size=16, epochs=1):
         ### Training and Evaluation ###
         X_batches = util.split_into_batches(X, batch_size) * epochs
         Y_batches = util.split_into_batches(Y, batch_size) * epochs
@@ -95,14 +96,15 @@ class RffVarImportance(object):
         num_steps = X_batches.__len__()
         num_batch = int(num_steps / epochs)
 
-        with model_sess as sess:
+        with self.model_sess as sess:
             sess.run(tf.global_variables_initializer())
+            self.RFF_weight, self.RFF_bias = sess.run(
+                [self.random_feature_weight, self.random_feature_bias])
 
-            rff_1 = sess.run(rff_output, feed_dict={X_tr: X_batches[0]})
-            weight_cov_val = util.compute_inverse(rff_1, sig_sq=sig2**2)
+            rff_1 = sess.run(self.rff_output,
+                             feed_dict={self.X_tr: X_batches[0]})
+            weight_cov_val = util.compute_inverse(rff_1, sig_sq=self.sig2 ** 2)
             covl_xy_val = np.matmul(rff_1.T, Y_batches[0])
-
-            rff_weight, rff_bias = sess.run([random_feature_weight, random_feature_bias])
 
             for batch_id in range(1, num_batch):
                 X_batch = X_batches[batch_id]
@@ -110,11 +112,12 @@ class RffVarImportance(object):
 
                 ## update posterior mean/covariance
                 try:
-                    weight_cov_val, covl_xy_val = sess.run([weight_cov, covl_xy],
-                                                           feed_dict={X_tr: X_batch,
-                                                                      Y_true: Y_batch,
-                                                                      H_inv: weight_cov_val,
-                                                                      Phi_y: covl_xy_val})
+                    weight_cov_val, covl_xy_val = sess.run(
+                        [self.weight_cov, self.covl_xy],
+                        feed_dict={self.X_tr: X_batch,
+                                   self.Y_true: Y_batch,
+                                   self.H_inv: weight_cov_val,
+                                   self.Phi_y: covl_xy_val})
                 except:
                     print("\n================================\n"
                           "Problem occurred at Step {}\n"
@@ -122,22 +125,22 @@ class RffVarImportance(object):
 
         self.beta = np.matmul(weight_cov_val, covl_xy_val)
 
-        self.Sigma_beta = weight_cov_val * sig2**2
+        self.weight_cov_val = weight_cov_val
+        self.covl_xy_val = covl_xy_val
+        self.Sigma_beta = weight_cov_val * self.sig2 ** 2
 
-        self.RFF_weight = rff_weight  # (d, D)
-
-        self.RFF_bias = rff_bias  # (D, )
-
+    def make_rff_feature(self, X):
+        return np.sqrt(2. / self.rff_dim) * np.cos(
+            np.matmul(X, self.RFF_weight) + self.RFF_bias)
 
     def predict(self, X):
-        D = self.RFF_weight.shape[1]
+        D = self.rff_dim
         rff_new = np.sqrt(2. / D) * np.cos(np.matmul(X, self.RFF_weight) +
                                            self.RFF_bias)
         pred_mean = np.matmul(rff_new, self.beta)
         pred_cov = np.matmul(np.matmul(rff_new, self.Sigma_beta), rff_new.T)
 
         return pred_mean.reshape((-1, 1)), pred_cov
-
 
     def estimate_psi(self, X, n_samp=1000):
         '''
@@ -150,25 +153,25 @@ class RffVarImportance(object):
         n, d = X.shape
         D = self.RFF_weight.shape[1]
         der_array = np.zeros((n, d, n_samp))
-        beta_samp = np.random.multivariate_normal(self.beta, self.Sigma_beta, size=n_samp).T
+        beta_samp = np.random.multivariate_normal(self.beta,
+                                                  self.Sigma_beta,
+                                                  size=n_samp).T
         # (D, n_samp)
         for r in range(n):
-            cur_mat = np.diag(nD_mat[r,:])
+            cur_mat = np.diag(nD_mat[r, :])
             cur_mat_W = np.matmul(self.RFF_weight, cur_mat)  # (d, D)
             cur_W_beta = np.matmul(cur_mat_W, beta_samp)  # (d, n_samp)
-            der_array[r,:,:] = cur_W_beta
+            der_array[r, :, :] = cur_W_beta
 
         der_array = der_array * np.sqrt(2. / D)
         psi_mean = np.zeros(self.dim_in)
         psi_var = np.zeros(self.dim_in)
 
         for l in range(self.dim_in):
-            grad_samp = der_array[:,l,:].T  # (n_samp, n)
+            grad_samp = der_array[:, l, :].T  # (n_samp, n)
             psi_samp = np.mean(grad_samp ** 2, 1)
             psi_mean[l] = np.mean(psi_samp)
             psi_var[l] = np.var(psi_samp)
 
         return psi_mean, psi_var
 
-    def return_value(self):
-        return self.RFF_weight, self.RFF_bias, self.beta, self.Sigma_beta
